@@ -30,6 +30,8 @@ class Hud extends StatelessWidget {
           valueListenable: game.hud,
           builder: (context, state, _) {
             final pill = _pillText(state);
+            final secondsLeft = state.secondsLeft;
+            final warning = secondsLeft != null && secondsLeft <= 10;
             return Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -51,7 +53,9 @@ class Hud extends StatelessWidget {
                         ),
                       ),
                       if (pill != null) ...[
-                        GlassPill(text: pill),
+                        warning
+                            ? WarningPill(text: pill)
+                            : GlassPill(text: pill),
                         const SizedBox(width: 10),
                       ],
                       RoundIconButton(
@@ -193,6 +197,61 @@ class _LoopBarState extends State<LoopBar> with SingleTickerProviderStateMixin {
           ],
         );
       },
+    );
+  }
+}
+
+/// Red pill that pulses, for the last seconds on the clock.
+class WarningPill extends StatefulWidget {
+  const WarningPill({super.key, required this.text});
+
+  final String text;
+
+  @override
+  State<WarningPill> createState() => _WarningPillState();
+}
+
+class _WarningPillState extends State<WarningPill>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _pulse = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 500),
+  )..repeat(reverse: true);
+
+  @override
+  void dispose() {
+    _pulse.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ScaleTransition(
+      scale: Tween<double>(
+        begin: 1,
+        end: 1.12,
+      ).animate(CurvedAnimation(parent: _pulse, curve: Curves.easeInOut)),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+        decoration: BoxDecoration(
+          color: AppColors.danger,
+          borderRadius: BorderRadius.circular(AppRadii.pill),
+          boxShadow: [
+            BoxShadow(
+              color: AppColors.danger.withValues(alpha: 0.5),
+              blurRadius: 12,
+            ),
+          ],
+        ),
+        child: Text(
+          widget.text,
+          style: AppText.caption.copyWith(
+            fontSize: 14,
+            fontWeight: FontWeight.w700,
+            color: AppColors.text,
+          ),
+        ),
+      ),
     );
   }
 }

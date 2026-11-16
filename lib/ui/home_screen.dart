@@ -1,15 +1,28 @@
 import 'package:flutter/material.dart';
 
+import '../game/game_feedback.dart';
 import '../game/game_mode.dart';
 import '../progress.dart';
+import '../settings.dart';
 import 'app_theme.dart';
 import 'game_screen.dart';
+import 'glass_page.dart';
+import 'settings_screen.dart';
+import 'stats_screen.dart';
+import 'themes_screen.dart';
 
 /// Start screen: one glass card per game mode.
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key, required this.progress});
+  const HomeScreen({
+    super.key,
+    required this.progress,
+    required this.settings,
+    this.sounds = const SilentSounds(),
+  });
 
   final Progress progress;
+  final Settings settings;
+  final GameSounds sounds;
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -25,13 +38,18 @@ class _HomeScreenState extends State<HomeScreen> {
     GameMode.beltFull: Icons.sync_rounded,
   };
 
-  Future<void> _open(GameMode mode) async {
-    await Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => GameScreen(mode: mode, progress: widget.progress),
-      ),
-    );
-    // Progress may have changed while playing.
+  Future<void> _open(GameMode mode) => _push(
+    (_) => GameScreen(
+      mode: mode,
+      progress: widget.progress,
+      settings: widget.settings,
+      sounds: widget.sounds,
+    ),
+  );
+
+  Future<void> _push(WidgetBuilder builder) async {
+    await Navigator.of(context).push(MaterialPageRoute<void>(builder: builder));
+    // Progress or settings may have changed on the other screen.
     if (mounted) setState(() {});
   }
 
@@ -61,11 +79,50 @@ class _HomeScreenState extends State<HomeScreen> {
           const GlowBackground(),
           SafeArea(
             child: ListView(
-              padding: const EdgeInsets.fromLTRB(16, 32, 16, 24),
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
               children: [
-                const Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 8),
-                  child: Text('Color Flow', style: AppText.display),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    RoundIconButton(
+                      icon: Icons.bar_chart_rounded,
+                      tooltip: 'Stats',
+                      onPressed: () =>
+                          _push((_) => StatsScreen(progress: widget.progress)),
+                    ),
+                    const SizedBox(width: 8),
+                    RoundIconButton(
+                      icon: Icons.palette_outlined,
+                      tooltip: 'Themes',
+                      onPressed: () => _push(
+                        (_) => ThemesScreen(
+                          progress: widget.progress,
+                          settings: widget.settings,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    RoundIconButton(
+                      icon: Icons.settings_outlined,
+                      tooltip: 'Settings',
+                      onPressed: () => _push(
+                        (_) => SettingsScreen(settings: widget.settings),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  child: Row(
+                    children: [
+                      const Flexible(
+                        child: Text('Color Flow', style: AppText.display),
+                      ),
+                      const SizedBox(width: 12),
+                      StarCountPill(stars: widget.progress.totalStars),
+                    ],
+                  ),
                 ),
                 const Padding(
                   padding: EdgeInsets.fromLTRB(8, 4, 8, 24),
