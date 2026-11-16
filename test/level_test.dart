@@ -20,6 +20,33 @@ void main() {
       expect([l30.colorCount, l30.tubeSize, l30.loopCapacity], [6, 6, 5]);
       expect(LevelConfig.forLevel(99).colorCount, 6);
     });
+
+    test('special block counts', () {
+      int hidden(int level) => LevelConfig.forLevel(level).hiddenCount;
+      int locked(int level) => LevelConfig.forLevel(level).lockedCount;
+      expect([11, 12, 16, 17, 22, 27, 32, 99].map(hidden), [
+        0,
+        2,
+        2,
+        3,
+        4,
+        5,
+        6,
+        6,
+      ]);
+      expect([21, 22, 31, 32, 42, 99].map(locked), [0, 1, 1, 2, 3, 3]);
+      expect(LevelConfig.forLevel(31).mayHaveRainbow, isFalse);
+      expect(LevelConfig.forLevel(32).mayHaveRainbow, isTrue);
+    });
+
+    test('loop speed grows 3% per level up to +60%', () {
+      double speed(int level) => LevelConfig.forLevel(level).loopSpeed;
+      expect(speed(1), 260);
+      expect(speed(2), closeTo(267.8, 1e-9));
+      expect(speed(11), closeTo(338, 1e-9));
+      expect(speed(21), closeTo(416, 1e-9));
+      expect(speed(60), closeTo(416, 1e-9));
+    });
   });
 
   group('Board', () {
@@ -128,6 +155,234 @@ void main() {
     });
   });
 
+  group('Hidden blocks', () {
+    test('are revealed for good once they are on top', () {
+      final board = Board(
+        tubes: [
+          [0, 1, 2],
+          <int>[],
+          <int>[],
+        ],
+        tubeSize: 4,
+        hidden: [
+          {0, 1},
+          <int>{},
+          <int>{},
+        ],
+      );
+      expect(board.isHidden(0, 1), isTrue);
+      final next = applyCleanMove(board, 0, 3)!;
+      expect(next.tubes[0], [0, 1]);
+      expect(next.isHidden(0, 1), isFalse);
+      expect(next.isHidden(0, 0), isTrue);
+      // A block landing on it does not hide it again.
+      next.tubes[0].add(2);
+      expect(next.isHidden(0, 1), isFalse);
+      // Rules use the true color, and hidden blocks are not in the key.
+      expect(board.topRunLength(0), 1);
+      expect(board.key(), Board(tubes: board.tubes, tubeSize: 4).key());
+    });
+  });
+
+  group('Locked blocks', () {
+    test('a run stops at a locked block', () {
+      final board = Board(
+        tubes: [
+          [1, 0, 0],
+          <int>[],
+        ],
+        tubeSize: 4,
+        locked: [
+          {1},
+          <int>{},
+        ],
+      );
+      expect(board.topRunLength(0), 1);
+      expect(applyCleanMove(board, 0, 3)!.tubes, [
+        [1, 0],
+        [0],
+      ]);
+    });
+
+    test('a locked top cannot be tapped and takes no blocks', () {
+      final board = Board(
+        tubes: [
+          [1, 0],
+          [0],
+          <int>[],
+        ],
+        tubeSize: 4,
+        locked: [
+          {1},
+          <int>{},
+          <int>{},
+        ],
+      );
+      expect(board.topRunLength(0), 0);
+      expect(applyCleanMove(board, 0, 3), isNull);
+      final r = TubeReservations(3);
+      expect(r.accepts(board, 0, 0), isFalse);
+      // The 0 skips the locked tube even though its top matches.
+      expect(applyCleanMove(board, 1, 3)!.tubes[2], [0]);
+    });
+
+    test('a tube with a locked block is never complete', () {
+      final board = Board(
+        tubes: [
+          [0, 0, 0, 0],
+        ],
+        tubeSize: 4,
+        locked: [
+          {0},
+        ],
+      );
+      expect(board.isComplete(0), isFalse);
+      expect(board.isWon, isFalse);
+    });
+
+    test('each completion opens one block: leftmost tube, topmost', () {
+      final board = Board(
+        tubes: [
+          [0, 0, 0],
+          <int>[],
+          [1, 1, 0],
+          [2, 1],
+        ],
+        tubeSize: 4,
+        locked: [
+          <int>{},
+          <int>{},
+          {0, 1},
+          {0},
+        ],
+      );
+      final next = applyCleanMove(board, 2, 3)!;
+      expect(next.isComplete(0), isTrue);
+      expect(next.locked, [
+        <int>{},
+        <int>{},
+        {0},
+        {0},
+      ]);
+    });
+
+    test('an opened block can complete its tube and open the next', () {
+      final board = Board(
+        tubes: [
+          [0, 0, 0],
+          [1, 1, 1, 1],
+          [2, 0],
+        ],
+        tubeSize: 4,
+        locked: [
+          <int>{},
+          {3},
+          {0},
+        ],
+      );
+      final next = applyCleanMove(board, 2, 3)!;
+      // Tube 0 completes and opens tube 1, which completes and opens tube 2.
+      expect(next.isComplete(0), isTrue);
+      expect(next.isComplete(1), isTrue);
+      expect(next.lockedCount, 0);
+    });
+  });
+
+  group('Rainbow block', () {
+    const r = Board.rainbow;
+
+    test('on top it leaves with the run under it, or alone', () {
+      final board = Board(
+        tubes: [
+          [1, 0, 0, r],
+          [r],
+          [2, r],
+          <int>[],
+          <int>[],
+        ],
+        tubeSize: 4,
+        locked: [
+          <int>{},
+          <int>{},
+          {0},
+          <int>{},
+          <int>{},
+        ],
+      );
+      expect(board.topRunLength(0), 3);
+      expect(board.topRunLength(1), 1);
+      expect(board.topRunLength(2), 1);
+      expect(board.copy().takeRun(0), [r, 0, 0]);
+    });
+
+    test('any color lands on a rainbow top, scored as a match', () {
+      final board = Board(
+        tubes: [
+          [0, r],
+          [1],
+          <int>[],
+        ],
+        tubeSize: 4,
+      );
+      final res = TubeReservations(3);
+      expect(res.accepts(board, 0, 1), isTrue);
+      expect(res.score(board, 0, 1), 11);
+      expect(res.score(board, 0, 0), 12);
+      // 1 on [0, R] (11) ties with [1] (11): the first passed wins.
+      expect(res.chooseTube(board, [1, 0, 2], 1), 1);
+      expect(res.chooseTube(board, [0, 1, 2], 1), 0);
+    });
+
+    test('a rainbow on the loop lands on the best tube top', () {
+      final board = Board(
+        tubes: [
+          [1],
+          [0, 0],
+          <int>[],
+          [2, 2, 2, 2],
+        ],
+        tubeSize: 4,
+      );
+      final res = TubeReservations(4);
+      expect(res.chooseTube(board, [2, 0, 1, 3], r), 1);
+      expect(res.score(board, 2, r), 1);
+      expect(res.score(board, 3, r), isNull);
+    });
+
+    test('a full tube is complete when the other blocks share a color', () {
+      final board = Board(
+        tubes: [
+          [0, r, 0, 0],
+          [1, r, 0, 0],
+          [0, 0, r],
+        ],
+        tubeSize: 4,
+      );
+      expect(board.isComplete(0), isTrue);
+      expect(board.isComplete(1), isFalse);
+      expect(board.isComplete(2), isFalse);
+    });
+
+    test('a rainbow completes a tube in a move', () {
+      final board = Board(
+        tubes: [
+          [0, 0, 0],
+          [1, 1, r],
+          [1, 1],
+          <int>[],
+        ],
+        tubeSize: 4,
+      );
+      // The rainbow takes the 1s under it: a run of 3.
+      expect(applyCleanMove(board, 1, 2), isNull);
+      final next = applyCleanMove(board, 1, 3)!;
+      // The rainbow lands on the 0s (13), the 1s on the single 1.
+      expect(next.tubes[0], [0, 0, 0, r]);
+      expect(next.tubes[2], [1, 1, 1, 1]);
+      expect(next.isWon, isTrue);
+    });
+  });
+
   group('LevelGenerator', () {
     test('creates solvable levels for each size step', () {
       final generator = LevelGenerator(random: Random(1));
@@ -151,6 +406,49 @@ void main() {
         expect(puzzle.board.tubeCount, config.colorCount + 1);
         final blocks = puzzle.board.tubes.fold<int>(0, (n, t) => n + t.length);
         expect(blocks + puzzle.loop.length, config.blockCount);
+        expect(
+          LoopSolver(
+            config.loopCapacity,
+            60000,
+          ).solve(puzzle.board, puzzle.loop),
+          isNotNull,
+          reason: 'level $level',
+        );
+      }
+    });
+
+    test('levels with special blocks are solvable', () {
+      var rainbows = 0;
+      for (final level in [12, 22, 32, 42]) {
+        final config = LevelConfig.forLevel(level);
+        for (var seed = 1; seed <= 4; seed++) {
+          final puzzle = LevelGenerator(random: Random(seed)).generate(config);
+          final board = puzzle.board;
+          final reason = 'level $level seed $seed';
+          int count(List<Set<int>> sets) =>
+              sets.fold(0, (n, s) => n + s.length);
+          expect(count(board.hidden), config.hiddenCount, reason: reason);
+          expect(count(board.locked), config.lockedCount, reason: reason);
+          for (var t = 0; t < board.tubeCount; t++) {
+            final top = board.tubes[t].length - 1;
+            expect(board.isHidden(t, top), isFalse, reason: reason);
+            expect(board.isLocked(t, top), isFalse, reason: reason);
+          }
+          final hasRainbow = board.tubes.any((t) => t.contains(Board.rainbow));
+          if (hasRainbow) rainbows++;
+          if (level < 32) expect(hasRainbow, isFalse, reason: reason);
+          final path = Solver(config.loopCapacity, 60000).solve(board);
+          expect(path, isNotNull, reason: reason);
+          expect(puzzle.solutionLength, path!.length, reason: reason);
+        }
+      }
+      expect(rainbows, greaterThan(0));
+    });
+
+    test('belt-full levels with special blocks are solvable', () {
+      for (final level in [12, 22, 32]) {
+        final config = LevelConfig.forLevel(level, beltFull: true);
+        final puzzle = LevelGenerator(random: Random(level)).generate(config);
         expect(
           LoopSolver(
             config.loopCapacity,

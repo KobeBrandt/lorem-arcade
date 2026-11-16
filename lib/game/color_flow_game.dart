@@ -11,6 +11,7 @@ import 'package:flutter/services.dart';
 
 import '../ui/app_theme.dart';
 import 'board.dart';
+import 'game_feedback.dart';
 import 'game_mode.dart';
 import 'level_config.dart';
 import 'level_generator.dart';
@@ -115,6 +116,9 @@ class _FlyingBlock {
 
   _Phase phase = _Phase.rising;
   double phaseTime = 0;
+
+  /// The first block of a tap: plays the whoosh when it reaches the loop.
+  bool whooshOnLoop = false;
   int target = -1;
 
   /// Checkpoint value at the last board change. Used for stuck detection.
@@ -142,6 +146,8 @@ class ColorFlowGame extends FlameGame with TapCallbacks {
     this.onScore,
     this.onWon,
     this.haptics = true,
+    this.style = const BlockStyle(palette: AppColors.blocks),
+    this.sounds = const SilentSounds(),
   }) : _levelSource = levelSource ?? generateInBackground;
 
   final GameMode mode;
@@ -159,12 +165,40 @@ class ColorFlowGame extends FlameGame with TapCallbacks {
   final ValueChanged<int>? onScore;
 
   /// Called when a level is won, before the win overlay shows.
-  final VoidCallback? onWon;
+  final ValueChanged<LevelResult>? onWon;
   final bool haptics;
 
+  /// Block colors and shapes.
+  final BlockStyle style;
+  final GameSounds sounds;
+
+  /// Default block colors.
   static const List<Color> palette = AppColors.blocks;
 
-  static const double _loopSpeed = 260;
+  static const double _slideDelay = 0.06;
+  static const double _slideDuration = 0.35;
+  static const double _comboWindow = 2;
+  static const double _comboLabelDuration = 1;
+  static const Color _hiddenColor = Color(0xFF3A3F4B);
+  static const Color _lockedColor = Color(0xFF7D8494);
+  static const List<Color> _rainbowColors = [
+    Color(0xFFFF5A5F),
+    Color(0xFFFFB347),
+    Color(0xFFFFE066),
+    Color(0xFF5BE38C),
+    Color(0xFF4DA8FF),
+    Color(0xFFB57BFF),
+    Color(0xFFFF5A5F),
+  ];
+  static const List<double> _rainbowStops = [
+    0,
+    1 / 6,
+    2 / 6,
+    3 / 6,
+    4 / 6,
+    5 / 6,
+    1,
+  ];
   static const double _blockLength = 46;
   static const double _blockGap = 10;
   static const double _channelWidth = 26;
@@ -223,6 +257,23 @@ class ColorFlowGame extends FlameGame with TapCallbacks {
   /// Remaining shake and completion pulse time per tube, in seconds.
   List<double> _shake = [];
   List<double> _pulse = [];
+
+  /// Accepted taps and play time of this attempt, for [LevelResult].
+  int _taps = 0;
+  double _playTime = 0;
+
+  /// Completions within [_comboWindow] seconds of each other.
+  int _combo = 0;
+  double _lastCompleteTime = double.negativeInfinity;
+  double _comboLabelTime = 0;
+  TextPainter? _comboPainter;
+  int _comboPainterValue = 0;
+
+  /// Combo strength of each tube's completion pulse.
+  List<int> _pulseCombo = [];
+
+  /// Time since the board started, for the slide-in of the tubes.
+  double _slideTime = 0;
 
   /// Level 1 hint: visible until the first tap on a tube.
   bool _hintVisible = false;
@@ -285,6 +336,8 @@ class ColorFlowGame extends FlameGame with TapCallbacks {
   // Center text, rebuilt only when the content changes.
   TextPainter? _centerPainter;
   String _centerKey = '';
+  late TextPainter _questionPainter;
+  late TextPainter _lockPainter;
   late final TextPainter _fingerPainter = TextPainter(
     textDirection: TextDirection.ltr,
     text: TextSpan(
@@ -306,6 +359,19 @@ class ColorFlowGame extends FlameGame with TapCallbacks {
   Int32List _colors = Int32List(0);
 
   Board get board => _board!;
+
+  /// Current combo count (0 before the first completion).
+  @visibleForTesting
+  int get combo => _combo;
+
+  /// Accepted taps this attempt.
+  @visibleForTesting
+  int get taps => _taps;
+
+  /// True while the tubes slide in; taps are ignored until it ends.
+  bool get isSliding =>
+      _board != null &&
+      _slideTime < _slideDelay * (board.tubeCount - 1) + _slideDuration;
 
   /// True when no blocks are moving. Used by tests.
   @visibleForTesting
@@ -395,6 +461,13 @@ class ColorFlowGame extends FlameGame with TapCallbacks {
     _sparkles.clear();
     _shake = List.filled(newBoard.tubeCount, 0);
     _pulse = List.filled(newBoard.tubeCount, 0);
+    _pulseCombo = List.filled(newBoard.tubeCount, 1);
+    _taps = 0;
+    _playTime = 0;
+    _combo = 0;
+    _lastCompleteTime = double.negativeInfinity;
+    _comboLabelTime = 0;
+    _slideTime = 0;
     _movesLeft = moveLimitFor(puzzle.solutionLength);
     _timeLeft = secondsFor(config).toDouble();
     _hintVisible = mode == GameMode.levels && level == 1;
@@ -575,8 +648,41 @@ class ColorFlowGame extends FlameGame with TapCallbacks {
       _cardRect.bottomCenter,
       [AppColors.glassFill, AppColors.glassFillLow],
     );
+    final glyphSize = min(tubeWidth - _tubePad * 2, _slotHeight) * 0.5;
+    _questionPainter = _glyph('?', glyphSize, null);
+    _lockPainter = _glyph(
+      String.fromCharCode(Icons.lock_rounded.codePoint),
+      glyphSize,
+      Icons.lock_rounded,
+    );
     _layoutReady = true;
     if (_loopPending) _spawnLoop();
+  }
+
+  TextPainter _glyph(String text, double fontSize, IconData? icon) =>
+      TextPainter(
+        textDirection: TextDirection.ltr,
+        text: TextSpan(
+          text: text,
+          style: TextStyle(
+            fontSize: fontSize,
+            fontWeight: FontWeight.w800,
+            fontFamily: icon?.fontFamily,
+            package: icon?.fontPackage,
+            color: const Color(0xCCFFFFFF),
+          ),
+        ),
+      )..layout();
+
+  /// How far below its place a tube is during the slide-in.
+  double _slideOffset(int tube) {
+    final t = ((_slideTime - tube * _slideDelay) / _slideDuration).clamp(
+      0.0,
+      1.0,
+    );
+    if (t >= 1) return 0;
+    final distance = size.y - _tubeRects[tube].top + 24;
+    return distance * (1 - Curves.easeOutCubic.transform(t));
   }
 
   double _shakeOffset(int tube) {
@@ -587,7 +693,7 @@ class ColorFlowGame extends FlameGame with TapCallbacks {
   }
 
   Rect _tubeRect(int tube) =>
-      _tubeRects[tube].shift(Offset(_shakeOffset(tube), 0));
+      _tubeRects[tube].shift(Offset(_shakeOffset(tube), _slideOffset(tube)));
 
   Rect _slotRect(int tube, int slot) {
     final t = _tubeRect(tube);
@@ -630,54 +736,59 @@ class ColorFlowGame extends FlameGame with TapCallbacks {
 
   @visibleForTesting
   void tapTube(int tube) {
-    if (status != GameStatus.playing) return;
+    if (status != GameStatus.playing || isSliding) return;
     _hintVisible = false;
+    if (board.tubes[tube].isEmpty) return;
 
+    // Locked top: the tube cannot be tapped.
     final run = board.topRunLength(tube);
-    if (run == 0) return;
+    if (run == 0) {
+      _reject(tube);
+      return;
+    }
 
     // Move limit: no taps left. The last blocks may still land.
     if (mode == GameMode.moves && _movesLeft == 0) {
-      _shake[tube] = _shakeDuration;
-      _haptic(HapticFeedback.mediumImpact);
+      _reject(tube);
       return;
     }
 
     // Blocks are still falling into this tube; wait until they land.
     if (reservations.isBusy(tube)) {
-      _shake[tube] = _shakeDuration;
-      _haptic(HapticFeedback.mediumImpact);
+      _reject(tube);
       return;
     }
 
     // Loop has no room for the whole run: nothing is added.
     if (_loopCount + run > config.loopCapacity) {
-      _shake[tube] = _shakeDuration;
       _blockedTaps++;
-      _haptic(HapticFeedback.mediumImpact);
+      _reject(tube);
       _publishHud();
       return;
     }
 
     _haptic(HapticFeedback.lightImpact);
+    sounds.tap();
+    _taps++;
     if (mode == GameMode.moves) _movesLeft--;
-    final t = board.tubes[tube];
-    final color = t.last;
+    final topSlot = board.tubes[tube].length - 1;
+    final slotRects = [
+      for (var j = 0; j < run; j++) _slotRect(tube, topSlot - j),
+    ];
+    final colors = board.takeRun(tube);
     final start = _dropDistance[tube];
     final released = <_FlyingBlock>[];
     for (var j = 0; j < run; j++) {
-      final slot = t.length - 1;
-      t.removeLast();
       final spacing = j * (_blockLength + _blockGap);
       final block = _FlyingBlock(
-        color: color,
+        color: colors[j],
         source: tube,
         distance: start - spacing,
         checkOffset: spacing,
-        particles: _makeParticles(color),
+        particles: _makeParticles(colors[j]),
         phaseDelay: j * 0.08,
-      );
-      final slotRect = _slotRect(tube, slot);
+      )..whooshOnLoop = j == 0;
+      final slotRect = slotRects[j];
       for (final p in block.particles) {
         p.from = Offset(
           slotRect.left + _random.nextDouble() * slotRect.width,
@@ -693,11 +804,20 @@ class ColorFlowGame extends FlameGame with TapCallbacks {
     _publishHud();
   }
 
+  /// A tap that does nothing: the tube shakes.
+  void _reject(int tube) {
+    _shake[tube] = _shakeDuration;
+    _haptic(HapticFeedback.mediumImpact);
+    sounds.blocked();
+  }
+
   List<_Particle> _makeParticles(int colorId) {
-    final base = palette[colorId];
-    final hsl = HSLColor.fromColor(base);
+    final rainbow = colorId == Board.rainbow;
+    final hsl = rainbow
+        ? const HSLColor.fromAHSL(1, 0, 0.8, 0.62)
+        : HSLColor.fromColor(style.palette[colorId]);
     return List.generate(_particlesPerBlock, (_) {
-      final shade = hsl
+      final shade = (rainbow ? hsl.withHue(_random.nextDouble() * 360) : hsl)
           .withLightness(
             (hsl.lightness + (_random.nextDouble() - 0.5) * 0.18).clamp(0, 1),
           )
@@ -721,6 +841,9 @@ class ColorFlowGame extends FlameGame with TapCallbacks {
     final realDt = dt;
     dt = min(dt, 1 / 20);
     _time += dt;
+    _slideTime += dt;
+    if (status == GameStatus.playing) _playTime += realDt;
+    if (_comboLabelTime > 0) _comboLabelTime = max(0, _comboLabelTime - dt);
 
     for (var i = 0; i < _shake.length; i++) {
       if (_shake[i] > 0) _shake[i] = max(0, _shake[i] - dt);
@@ -737,10 +860,11 @@ class ColorFlowGame extends FlameGame with TapCallbacks {
             b.phase = _Phase.looping;
             b.phaseTime = 0;
             b.lapMark = b.checkpoint;
+            if (b.whooshOnLoop) sounds.whoosh();
           }
         case _Phase.looping:
           final before = b.checkpoint;
-          b.distance += _loopSpeed * dt;
+          b.distance += config.loopSpeed * dt;
           _checkDrops(b, before, b.checkpoint);
         case _Phase.falling:
           if (b.phaseTime >= _fallDuration + 0.12) landed.add(b);
@@ -749,12 +873,13 @@ class ColorFlowGame extends FlameGame with TapCallbacks {
 
     if (landed.isNotEmpty) {
       for (final b in landed) {
-        final wasComplete = board.isComplete(b.target);
+        final before = board.completeFlags();
         reservations.land(board, b.target);
         _fallingInto[b.target]--;
         _flying.remove(b);
-        if (!wasComplete && board.isComplete(b.target)) {
-          _onTubeComplete(b.target);
+        // A completion opens a locked block, which can complete another.
+        for (final tube in board.settleCompletions(before)) {
+          _onTubeComplete(tube);
         }
       }
       _markProgress();
@@ -764,7 +889,14 @@ class ColorFlowGame extends FlameGame with TapCallbacks {
     if (status == GameStatus.playing && _flying.isEmpty && board.isWon) {
       status = GameStatus.won;
       _haptic(HapticFeedback.heavyImpact);
-      onWon?.call();
+      sounds.win();
+      onWon?.call(
+        LevelResult(
+          taps: _taps,
+          solutionLength: _puzzle!.solutionLength,
+          seconds: _playTime,
+        ),
+      );
       overlays.add('won');
       _publishHud();
     }
@@ -793,6 +925,7 @@ class ColorFlowGame extends FlameGame with TapCallbacks {
     status = GameStatus.failed;
     failReason = reason;
     _haptic(HapticFeedback.heavyImpact);
+    sounds.fail();
     overlays.remove('stuck');
     overlays.add('failed');
     _publishHud();
@@ -860,15 +993,26 @@ class ColorFlowGame extends FlameGame with TapCallbacks {
   }
 
   void _onTubeComplete(int tube) {
+    _combo = _time - _lastCompleteTime <= _comboWindow ? _combo + 1 : 1;
+    _lastCompleteTime = _time;
+    if (_combo >= 2) _comboLabelTime = _comboLabelDuration;
+    sounds.complete(_combo);
+
     _pulse[tube] = _pulseDuration;
+    _pulseCombo[tube] = _combo;
     if (mode == GameMode.endless) {
       _score++;
       onScore?.call(_score);
     }
-    _haptic(HapticFeedback.heavyImpact);
+    _haptic(switch (_combo) {
+      1 => HapticFeedback.lightImpact,
+      2 => HapticFeedback.mediumImpact,
+      _ => HapticFeedback.heavyImpact,
+    });
     final rect = _tubeRects[tube];
     final origin = Offset(rect.center.dx, rect.top + 8);
-    for (var i = 0; i < 18; i++) {
+    final sparkles = 18 + 12 * (min(_combo, 4) - 1);
+    for (var i = 0; i < sparkles; i++) {
       final angle = -pi / 2 + (_random.nextDouble() - 0.5) * pi * 0.9;
       final speed = 90 + _random.nextDouble() * 160;
       _sparkles.add(
@@ -902,7 +1046,39 @@ class ColorFlowGame extends FlameGame with TapCallbacks {
     _renderTubes(canvas);
     _renderParticles(canvas);
     _renderSparkles(canvas);
+    if (_comboLabelTime > 0 && _combo >= 2) _renderCombo(canvas);
     if (_hintVisible) _renderFinger(canvas);
+  }
+
+  /// 'Combo xN' above the tubes, fading out at the end.
+  void _renderCombo(Canvas canvas) {
+    if (_comboPainter == null || _comboPainterValue != _combo) {
+      _comboPainterValue = _combo;
+      _comboPainter = TextPainter(
+        textDirection: TextDirection.ltr,
+        text: TextSpan(
+          text: 'Combo x$_combo',
+          style: const TextStyle(
+            fontSize: 22,
+            fontWeight: FontWeight.w800,
+            color: AppColors.accentMint,
+            shadows: [Shadow(blurRadius: 12, color: Color(0x99000000))],
+          ),
+        ),
+      )..layout();
+    }
+    final painter = _comboPainter!;
+    final alpha = (_comboLabelTime / 0.3).clamp(0.0, 1.0);
+    final at = Offset(
+      _cardRect.center.dx - painter.width / 2,
+      _tubeRects.first.top - painter.height - 14,
+    );
+    canvas.saveLayer(
+      at & painter.size,
+      Paint()..color = Color.fromRGBO(255, 255, 255, alpha),
+    );
+    painter.paint(canvas, at);
+    canvas.restore();
   }
 
   // Frosted glass card behind the board.
@@ -994,8 +1170,14 @@ class ColorFlowGame extends FlameGame with TapCallbacks {
 
       if (_pulse[i] > 0) {
         final t = _pulse[i] / _pulseDuration;
-        _glowPaint.color = AppColors.accentMint.withValues(alpha: 0.8 * t);
-        canvas.drawRRect(rect.inflate(4 * (1 - t)), _glowPaint);
+        final strength = min(_pulseCombo[i], 4);
+        _glowPaint
+          ..color = AppColors.accentMint.withValues(alpha: 0.8 * t)
+          ..strokeWidth = 6.0 + 3 * (strength - 1);
+        canvas.drawRRect(
+          rect.inflate((4 + 3 * strength) * (1 - t)),
+          _glowPaint,
+        );
       }
 
       canvas.drawRRect(rect, _tubeFill);
@@ -1011,8 +1193,26 @@ class ColorFlowGame extends FlameGame with TapCallbacks {
           slot,
           const Radius.circular(AppRadii.block),
         );
-        _blockPaint.color = palette[tube[s]];
+        final color = tube[s];
+        final isLocked = board.isLocked(i, s);
+        final isHidden = board.isHidden(i, s);
+        if (isLocked) {
+          _blockPaint.color = _lockedColor;
+        } else if (isHidden) {
+          _blockPaint.color = _hiddenColor;
+        } else if (color == Board.rainbow) {
+          _blockPaint
+            ..color = const Color(0xFFFFFFFF)
+            ..shader = ui.Gradient.sweep(
+              slot.center,
+              _rainbowColors,
+              _rainbowStops,
+            );
+        } else {
+          _blockPaint.color = style.palette[color];
+        }
         canvas.drawRRect(r, _blockPaint);
+        _blockPaint.shader = null;
         canvas.drawRRect(
           RRect.fromRectAndRadius(
             Rect.fromLTWH(r.left + 3, r.top + 3, r.width - 6, 4),
@@ -1020,12 +1220,20 @@ class ColorFlowGame extends FlameGame with TapCallbacks {
           ),
           _shinePaint,
         );
-        _drawSymbol(
-          canvas,
-          tube[s],
-          slot.center + const Offset(0, 2),
-          min(slot.width, slot.height) * 0.36,
-        );
+        if (isLocked || isHidden) {
+          final glyph = isLocked ? _lockPainter : _questionPainter;
+          glyph.paint(
+            canvas,
+            slot.center - Offset(glyph.width / 2, glyph.height / 2 - 1),
+          );
+        } else if (color != Board.rainbow && style.showShapes) {
+          _drawSymbol(
+            canvas,
+            color,
+            slot.center + const Offset(0, 2),
+            min(slot.width, slot.height) * 0.36,
+          );
+        }
       }
     }
   }

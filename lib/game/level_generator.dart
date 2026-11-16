@@ -35,6 +35,7 @@ class LevelGenerator {
   Puzzle _generateNormal(LevelConfig config) {
     for (var attempt = 0; attempt < _maxAttempts; attempt++) {
       final board = _shuffled(config);
+      _addSpecials(board, config);
       if (_hasCompleteTube(board)) continue;
       final path = Solver(config.loopCapacity, _maxSolverNodes).solve(board);
       if (path != null) {
@@ -67,6 +68,7 @@ class LevelGenerator {
         for (var t = 0; t < config.emptyTubes; t++) <int>[],
       ];
       final board = Board(tubes: tubes, tubeSize: config.tubeSize);
+      _addSpecials(board, config);
 
       if (_hasCompleteTube(board)) continue;
 
@@ -94,6 +96,34 @@ class LevelGenerator {
       for (var t = 0; t < config.emptyTubes; t++) <int>[],
     ];
     return Board(tubes: tubes, tubeSize: config.tubeSize);
+  }
+
+  /// Places the special blocks of [config] on a shuffled board: maybe one
+  /// rainbow (replacing a block of a random color), then hidden blocks
+  /// and locked blocks, never on top of a tube.
+  void _addSpecials(Board board, LevelConfig config) {
+    final positions = <(int, int)>[
+      for (var t = 0; t < board.tubeCount; t++)
+        for (var i = 0; i < board.tubes[t].length; i++) (t, i),
+    ]..shuffle(_random);
+
+    if (config.mayHaveRainbow && _random.nextBool()) {
+      final color = _random.nextInt(config.colorCount);
+      final at = positions.firstWhere((p) => board.tubes[p.$1][p.$2] == color);
+      board.tubes[at.$1][at.$2] = Board.rainbow;
+      positions.remove(at);
+    }
+
+    // A locked top would block its tube from the start: far fewer
+    // boards are solvable that way.
+    positions.removeWhere((p) => p.$2 == board.tubes[p.$1].length - 1);
+    final hidden = positions.take(config.hiddenCount).toList();
+    for (final p in hidden) {
+      board.hidden[p.$1].add(p.$2);
+    }
+    for (final p in positions.skip(hidden.length).take(config.lockedCount)) {
+      board.locked[p.$1].add(p.$2);
+    }
   }
 
   bool _hasCompleteTube(Board board) {
@@ -154,34 +184,31 @@ Board? applyCleanMove(Board board, int source, int loopCapacity) {
   final run = board.topRunLength(source);
   if (run == 0 || run > loopCapacity) return null;
 
+  final before = board.completeFlags();
   final next = board.copy();
-  final color = next.tubes[source].last;
-  next.tubes[source].removeRange(
-    next.tubes[source].length - run,
-    next.tubes[source].length,
-  );
+  final blocks = next.takeRun(source);
 
   final reservations = TubeReservations(next.tubeCount);
   final order = next.passOrder(source);
-  for (var b = 0; b < run; b++) {
+  for (final color in blocks) {
     final target = reservations.chooseTube(next, order, color);
     if (target == null) return null;
     reservations.reserve(target, color);
   }
-  for (var t = 0; t < next.tubeCount; t++) {
-    while (reservations.isBusy(t)) {
-      reservations.land(next, t);
-    }
-  }
+  reservations.landAll(next);
+  next.settleCompletions(before);
   // A move that changes nothing is useless for the search.
   if (next.key() == board.key()) return null;
   return next;
 }
 
-/// Lands loop blocks wherever they fit (best-tube score), again and again,
-/// until no block can land. Blocks that never fit stay on the loop.
+/// Gives loop blocks a tube wherever they fit (best-tube score), again and
+/// again, until no block fits, then lands them. Blocks that never fit stay
+/// on the loop. Completed tubes then open locked blocks. This is exactly
+/// what the game does when it plans targets.
 /// Returns the new board and the blocks left on the loop.
 (Board, List<int>) settleLoop(Board board, List<int> loop, List<int> order) {
+  final before = board.completeFlags();
   final next = board.copy();
   final left = List<int>.of(loop);
   final reservations = TubeReservations(next.tubeCount);
@@ -191,11 +218,13 @@ Board? applyCleanMove(Board board, int source, int loopCapacity) {
     for (var i = 0; i < left.length; i++) {
       final target = reservations.chooseTube(next, order, left[i]);
       if (target == null) continue;
-      next.tubes[target].add(left.removeAt(i));
+      reservations.reserve(target, left.removeAt(i));
       changed = true;
       break;
     }
   }
+  reservations.landAll(next);
+  next.settleCompletions(before);
   return (next, left);
 }
 
@@ -230,13 +259,9 @@ class LoopSolver {
       final run = board.topRunLength(source);
       if (run == 0 || loop.length + run > loopCapacity) continue;
       final tapped = board.copy();
-      final color = tapped.tubes[source].last;
-      tapped.tubes[source].removeRange(
-        tapped.tubes[source].length - run,
-        tapped.tubes[source].length,
-      );
+      final blocks = tapped.takeRun(source);
       final (next, left) = settleLoop(tapped, [
-        ...List.filled(run, color),
+        ...blocks,
         ...loop,
       ], board.passOrder(source));
       path.add(source);
