@@ -65,7 +65,7 @@ class HudState {
   /// Timed mode only.
   final int? secondsLeft;
 
-  /// Endless mode only: tubes sorted this run.
+  /// Endless and rush only: the run score.
   final int? score;
 }
 
@@ -123,6 +123,12 @@ class _FlyingBlock {
 
   /// The first block of a tap: plays the whoosh when it reaches the loop.
   bool whooshOnLoop = false;
+
+  /// Rush: a new block. It drops into the first tube with room.
+  bool spawned = false;
+
+  /// Rush: a locked new block. Its color stays hidden.
+  bool locked = false;
   int target = -1;
 
   /// Checkpoint value at the last board change. Used for stuck detection.
@@ -168,6 +174,7 @@ class ColorFlowGame extends FlameGame with TapCallbacks {
   final ValueChanged<int>? onLevelReached;
 
   /// Endless and rush: called with the run score whenever it goes up.
+  /// In rush every clear scores its combo level (+1, +2, +3, ...).
   final ValueChanged<int>? onScore;
 
   /// Called when a level is won, before the win overlay shows.
@@ -255,6 +262,17 @@ class ColorFlowGame extends FlameGame with TapCallbacks {
   List<int> _fallingInto = [];
   double _timeLeft = 0;
   int _score = 0;
+
+  /// Rush: tubes cleared this run. Growth and spawn speed use this,
+  /// not the score.
+  int _clears = 0;
+
+  /// Rush: the next spawn group, kept until the belt has room for it.
+  List<RushSpawn>? _nextSpawn;
+
+  /// Rush: spawns new blocks on a timer. Tests turn it off to spawn by hand.
+  @visibleForTesting
+  bool autoSpawn = true;
 
   /// Rush: time since the last new block, and the seconds left before
   /// each bursting tube empties (0 when it is not bursting).
@@ -392,8 +410,15 @@ class ColorFlowGame extends FlameGame with TapCallbacks {
   @visibleForTesting
   set score(int value) => _score = value;
 
+  /// Rush: tubes cleared this run. Tests may set it to skip ahead to a
+  /// later stage.
+  @visibleForTesting
+  int get clears => _clears;
+  @visibleForTesting
+  set clears(int value) => _clears = value;
+
   /// Rush: seconds between two new blocks right now.
-  double get spawnInterval => rushSpawnInterval(_score);
+  double get spawnInterval => rushSpawnInterval(_clears);
 
   /// True while the tubes slide in; taps are ignored until it ends.
   bool get isSliding =>
@@ -504,6 +529,8 @@ class ColorFlowGame extends FlameGame with TapCallbacks {
     _clearTimers = List.filled(newBoard.tubeCount, 0);
     if (mode == GameMode.rush) {
       _score = 0;
+      _clears = 0;
+      _nextSpawn = null;
       config = LevelConfig.rush(0);
     }
     _movesLeft = moveLimitFor(puzzle.solutionLength);
@@ -548,7 +575,8 @@ class ColorFlowGame extends FlameGame with TapCallbacks {
   /// only drops at its target, so the game always matches the solver.
   /// [order] gives the tubes in the order a block passes them; by default
   /// every block uses [order]. Rush passes [orderFor] instead, so each
-  /// block counts from where it is on the loop.
+  /// block counts from where it is on the loop. Rush spawns do not look
+  /// for the best tube: see [_messyTarget].
   void _planTargets(
     List<int> order, {
     List<int> Function(_FlyingBlock b)? orderFor,
@@ -557,13 +585,12 @@ class ColorFlowGame extends FlameGame with TapCallbacks {
     while (changed) {
       changed = false;
       for (final b in _waiting) {
-        final target = reservations.chooseTube(
-          board,
-          orderFor?.call(b) ?? order,
-          b.color,
-        );
+        final tubes = orderFor?.call(b) ?? order;
+        final target = b.spawned
+            ? _messyTarget(b, tubes)
+            : reservations.chooseTube(board, tubes, b.color);
         if (target == null) continue;
-        reservations.reserve(target, b.color);
+        reservations.reserve(target, b.color, locked: b.locked);
         b.target = target;
         _waiting.remove(b);
         changed = true;
@@ -572,8 +599,23 @@ class ColorFlowGame extends FlameGame with TapCallbacks {
     }
   }
 
+  /// Rush spawn: the first tube in [order] with room, whatever its top
+  /// color. A bursting tube and a locked top take nothing. A locked block
+  /// also skips tubes with blocks still falling in, so nothing can land
+  /// on top of it.
+  int? _messyTarget(_FlyingBlock b, List<int> order) {
+    for (final tube in order) {
+      if (_clearTimers[tube] > 0) continue;
+      if (b.locked && reservations.isBusy(tube)) continue;
+      if (reservations.hasRoom(board, tube)) return tube;
+    }
+    return null;
+  }
+
   /// Tubes in the order [b] reaches their drop points from where it is now.
   List<int> _orderAhead(_FlyingBlock b) {
+    // A tapped block that has not reached the loop yet sits at its source.
+    if (b.phase == _Phase.rising) return board.passOrder(b.source);
     final len = _metric.length;
     double ahead(int tube) {
       final a = (_dropDistance[tube] - b.checkpoint) % len;
@@ -877,7 +919,12 @@ class ColorFlowGame extends FlameGame with TapCallbacks {
       released.add(block);
     }
     _waiting.insertAll(0, released);
-    _planTargets(board.passOrder(tube));
+    if (mode == GameMode.rush) {
+      // Waiting spawns are planned again from their own place.
+      _planFromPositions();
+    } else {
+      _planTargets(board.passOrder(tube));
+    }
     _markProgress();
     _publishHud();
   }
@@ -889,9 +936,11 @@ class ColorFlowGame extends FlameGame with TapCallbacks {
     sounds.blocked();
   }
 
-  List<_Particle> _makeParticles(int colorId) {
-    final rainbow = colorId == Board.rainbow;
-    final hsl = rainbow
+  List<_Particle> _makeParticles(int colorId, {bool locked = false}) {
+    final rainbow = colorId == Board.rainbow && !locked;
+    final hsl = locked
+        ? HSLColor.fromColor(_lockedColor)
+        : rainbow
         ? const HSLColor.fromAHSL(1, 0, 0.8, 0.62)
         : HSLColor.fromColor(style.palette[colorId]);
     return List.generate(_particlesPerBlock, (_) {
@@ -955,7 +1004,11 @@ class ColorFlowGame extends FlameGame with TapCallbacks {
     if (landed.isNotEmpty) {
       for (final b in landed) {
         final before = board.completeFlags();
-        reservations.land(board, b.target);
+        if (mode == GameMode.rush) {
+          reservations.landBlock(board, b.target, b.color, locked: b.locked);
+        } else {
+          reservations.land(board, b.target);
+        }
         _fallingInto[b.target]--;
         _flying.remove(b);
         // A completion opens a locked block, which can complete another.
@@ -1003,29 +1056,51 @@ class ColorFlowGame extends FlameGame with TapCallbacks {
       if (_clearTimers[i] == 0) _clearTube(i);
     }
 
+    if (!autoSpawn) return;
     _spawnTimer += dt;
-    // A full loop holds the spawn back until there is room.
-    if (_spawnTimer >= spawnInterval && _loopCount < config.loopCapacity) {
-      _spawnTimer = 0;
-      spawnBlock(_random.nextInt(config.colorCount));
-    }
+    if (_spawnTimer < spawnInterval) return;
+    // The group is picked once and held back until the loop has room
+    // for all of it.
+    final group = _nextSpawn ??= rollRushSpawn(
+      _clears,
+      config.colorCount,
+      _random,
+    );
+    if (_loopCount + group.length > config.loopCapacity) return;
+    _spawnTimer = 0;
+    _nextSpawn = null;
+    spawnGroup(group);
   }
 
-  /// Rush: puts a block of [color] on the loop at the top center and
-  /// plans its target like every other waiting block.
+  /// Rush: puts one block of [color] on the loop at the top center.
   @visibleForTesting
-  void spawnBlock(int color) {
-    final block = _FlyingBlock(
-      color: color,
-      source: -1,
-      distance: _spawnDistance,
-      checkOffset: 0,
-      particles: _makeParticles(color),
-      phaseDelay: 0,
-    )..phase = _Phase.looping;
-    block.lapMark = block.checkpoint;
-    _flying.add(block);
-    _waiting.insert(0, block);
+  void spawnBlock(int color, {bool locked = false}) =>
+      spawnGroup([RushSpawn(color, locked: locked)]);
+
+  /// Rush: puts [group] on the loop in a row, head at the top center.
+  /// Each block drops into the first tube with room from where it is.
+  @visibleForTesting
+  void spawnGroup(List<RushSpawn> group) {
+    final blocks = <_FlyingBlock>[];
+    for (var i = 0; i < group.length; i++) {
+      final spawn = group[i];
+      final block = _FlyingBlock(
+        color: spawn.color,
+        source: -1,
+        distance: _spawnDistance - i * (_blockLength + _blockGap),
+        checkOffset: 0,
+        particles: _makeParticles(spawn.color, locked: spawn.locked),
+        phaseDelay: 0,
+      );
+      block
+        ..phase = _Phase.looping
+        ..spawned = true
+        ..locked = spawn.locked
+        ..lapMark = block.checkpoint;
+      blocks.add(block);
+    }
+    _flying.addAll(blocks);
+    _waiting.insertAll(0, blocks);
     _planFromPositions();
     _publishHud();
   }
@@ -1035,7 +1110,8 @@ class ColorFlowGame extends FlameGame with TapCallbacks {
   void _clearTube(int tube) {
     board.tubes[tube].clear();
     board.hidden[tube].clear();
-    final next = LevelConfig.rush(_score);
+    board.locked[tube].clear();
+    final next = LevelConfig.rush(_clears);
     if (next.tubeCount > board.tubeCount) {
       config = next;
       while (board.tubeCount < next.tubeCount) {
@@ -1158,8 +1234,13 @@ class ColorFlowGame extends FlameGame with TapCallbacks {
 
     _pulse[tube] = _pulseDuration;
     _pulseCombo[tube] = _combo;
-    if (mode == GameMode.endless || mode == GameMode.rush) {
+    if (mode == GameMode.endless) {
       _score++;
+      onScore?.call(_score);
+    } else if (mode == GameMode.rush) {
+      // Each clear scores its combo level; growth counts clears.
+      _clears++;
+      _score += _combo;
       onScore?.call(_score);
     }
     if (mode == GameMode.rush) _clearTimers[tube] = _clearDelay;
@@ -1204,6 +1285,7 @@ class ColorFlowGame extends FlameGame with TapCallbacks {
     _renderCenter(canvas);
     _renderTubes(canvas);
     _renderParticles(canvas);
+    _renderBeltLocks(canvas);
     _renderSparkles(canvas);
     if (_comboLabelTime > 0 && _combo >= 2) _renderCombo(canvas);
     if (_hintVisible) _renderFinger(canvas);
@@ -1507,6 +1589,18 @@ class ColorFlowGame extends FlameGame with TapCallbacks {
       null,
       _atlasPaint,
     );
+  }
+
+  /// Rush: a lock glyph on locked blocks riding the loop.
+  void _renderBeltLocks(Canvas canvas) {
+    for (final b in _flying) {
+      if (!b.locked || b.phase != _Phase.looping) continue;
+      final at = _pointOnLoop(b.distance - _blockLength / 2, 0);
+      _lockPainter.paint(
+        canvas,
+        at - Offset(_lockPainter.width / 2, _lockPainter.height / 2),
+      );
+    }
   }
 
   void _renderSparkles(Canvas canvas) {

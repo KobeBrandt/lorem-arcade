@@ -578,11 +578,14 @@ void main() {
         expect(game.hud.value.loopCount, 1);
         _run(game, 0.2);
         expect(game.hud.value.loopCount, 2);
-        // 10 clears: 3 s x 0.95^10, about 1.8 s.
-        game.score = 10;
+        // 10 clears: 3 s x 0.95^10, about 1.8 s. The score does not count.
+        game.score = 50;
+        expect(game.spawnInterval, 3);
+        game.clears = 10;
         expect(game.spawnInterval, closeTo(1.796, 0.001));
         _run(game, 1.85);
-        expect(game.hud.value.loopCount, 3);
+        // From 5 clears a spawn may be a group of 2.
+        expect(game.hud.value.loopCount, inInclusiveRange(3, 4));
       },
     );
 
@@ -644,22 +647,22 @@ void main() {
       () => rush(clearBoard()),
       (game) async {
         _prepare(game);
-        game.score = 9;
+        game.clears = 9;
         game.tapTube(1);
         runUntil(game, () => game.board.tubeCount == 6);
-        expect(game.score, 10);
+        expect(game.clears, 10);
+        expect(game.score, 1);
         expect(game.config.colorCount, 4);
         expect(game.board.tubes[5], isEmpty);
         expect(game.board.tubes[0], isEmpty);
         // The new tube is drawn and can take blocks.
         game.render(Canvas(PictureRecorder()));
         expect(game.reservations.accepts(game.board, 5, 3), isTrue);
+        game.autoSpawn = false;
         game.spawnBlock(3);
-        runUntil(game, () => game.hud.value.loopCount == 0);
-        expect(
-          game.board.tubes[0].contains(3) || game.board.tubes[5].contains(3),
-          isTrue,
-        );
+        runUntil(game, () => game.isSettled);
+        // The new tube is the first one the spawn passes.
+        expect(game.board.tubes[5], [3]);
       },
     );
 
@@ -686,6 +689,268 @@ void main() {
         expect(game.status, GameStatus.playing);
         expect(game.score, 0);
         expect(game.hud.value.loopCount, 0);
+      },
+    );
+
+    testWithGame<ColorFlowGame>(
+      'a spawn drops into the first tube with room, whatever its color',
+      () => rush(
+        Board(
+          tubes: [
+            [0, 0],
+            [1],
+            [2, 2],
+            [1, 1],
+            [2, 0, 1],
+          ],
+          tubeSize: 4,
+        ),
+      ),
+      (game) async {
+        _prepare(game);
+        game.autoSpawn = false;
+        // From the top center the belt passes tube 4 first: its top is 1.
+        game.spawnBlock(0);
+        _runUntilSettled(game);
+        expect(game.board.tubes[4], [2, 0, 1, 0]);
+        // Tube 4 is full: the next one goes on to tube 3.
+        game.spawnBlock(2);
+        _runUntilSettled(game);
+        expect(game.board.tubes[3], [1, 1, 2]);
+        // A group rides in a row; each block drops like any spawn.
+        game.spawnGroup(const [RushSpawn(0), RushSpawn(1)]);
+        expect(game.hud.value.loopCount, 2);
+        _runUntilSettled(game);
+        expect(game.board.tubes[3], [1, 1, 2, 0]);
+        expect(game.board.tubes[2], [2, 2, 1]);
+        expect(game.board.tubes[0], [0, 0]);
+        expect(game.board.tubes[1], [1]);
+      },
+    );
+
+    testWithGame<ColorFlowGame>(
+      'tapped blocks still drop into the best tube',
+      () => rush(
+        Board(
+          tubes: [
+            [1, 0],
+            [1, 1, 2],
+            [2, 0],
+            <int>[],
+            <int>[],
+          ],
+          tubeSize: 4,
+        ),
+      ),
+      (game) async {
+        _prepare(game);
+        game.autoSpawn = false;
+        // Empty tubes 4 and 3 come first, but tube 2 has a matching top.
+        game.tapTube(0);
+        _runUntilSettled(game);
+        expect(game.board.tubes[2], [2, 0, 0]);
+        expect(game.board.tubes[3], isEmpty);
+        expect(game.board.tubes[4], isEmpty);
+      },
+    );
+
+    test('spawn groups and locked spawns depend on clears', () {
+      final random = Random(7);
+      const samples = 4000;
+
+      Map<int, int> sizes(int clears) {
+        final counts = <int, int>{};
+        for (var i = 0; i < samples; i++) {
+          final group = rollRushSpawn(clears, 3, random);
+          counts[group.length] = (counts[group.length] ?? 0) + 1;
+          final colors = group.map((s) => s.color).toSet();
+          expect(colors, hasLength(group.length), reason: 'distinct colors');
+          expect(colors.every((c) => c >= 0 && c < 3), isTrue);
+          if (clears < 8) expect(group.any((s) => s.locked), isFalse);
+        }
+        return counts;
+      }
+
+      expect(sizes(0), {1: samples});
+      expect(sizes(4), {1: samples});
+      final five = sizes(5);
+      expect(five.keys.toSet(), {1, 2});
+      expect(five[2]! / samples, closeTo(0.5, 0.05));
+      final fourteen = sizes(14);
+      expect(fourteen.keys.toSet(), {1, 2});
+      final fifteen = sizes(15);
+      expect(fifteen.keys.toSet(), {1, 2, 3});
+      for (final size in [1, 2, 3]) {
+        expect(fifteen[size]! / samples, closeTo(1 / 3, 0.05));
+      }
+      sizes(7); // no locks before 8 clears (checked inside)
+
+      var blocks = 0;
+      var locked = 0;
+      for (var i = 0; i < samples; i++) {
+        for (final s in rollRushSpawn(8, 3, random)) {
+          blocks++;
+          if (s.locked) locked++;
+        }
+      }
+      expect(locked / blocks, closeTo(1 / 8, 0.03));
+    });
+
+    test('a locked top or a locked block falling in takes nothing', () {
+      final board = Board(
+        tubes: [
+          [0, 1],
+          <int>[],
+          [2],
+        ],
+        tubeSize: 4,
+        locked: [
+          {1},
+          <int>{},
+          <int>{},
+        ],
+      );
+      final r = TubeReservations(3);
+      expect(r.hasRoom(board, 0), isFalse);
+      expect(r.accepts(board, 0, 1), isFalse);
+      expect(r.hasRoom(board, 1), isTrue);
+      r.reserve(1, 0, locked: true);
+      expect(r.hasRoom(board, 1), isFalse);
+      expect(r.accepts(board, 1, 0), isFalse);
+      expect(r.hasRoom(board, 2), isTrue);
+      r.landBlock(board, 1, 0, locked: true);
+      expect(board.tubes[1], [0]);
+      expect(board.locked[1], {0});
+      expect(r.hasRoom(board, 1), isFalse);
+    });
+
+    testWithGame<ColorFlowGame>(
+      'a locked spawn lands like any spawn and nothing lands on it',
+      () => rush(
+        Board(
+          tubes: [
+            [0],
+            [1],
+            [2],
+            [0, 1],
+            [2, 2],
+          ],
+          tubeSize: 4,
+        ),
+      ),
+      (game) async {
+        _prepare(game);
+        game.autoSpawn = false;
+        game.spawnBlock(1, locked: true);
+        // Draws the locked block on the belt without errors.
+        game.update(1 / 60);
+        game.render(Canvas(PictureRecorder()));
+        _runUntilSettled(game);
+        expect(game.board.tubes[4], [2, 2, 1]);
+        expect(game.board.locked[4], {2});
+        // It cannot be tapped.
+        game.tapTube(4);
+        expect(game.taps, 0);
+        // Tube 4 has room, but its top is locked: the 0 goes on.
+        game.spawnBlock(0);
+        _runUntilSettled(game);
+        expect(game.board.tubes[4], [2, 2, 1]);
+        expect(game.board.tubes[3], [0, 1, 0]);
+      },
+    );
+
+    final lockScores = <int>[];
+    testWithGame<ColorFlowGame>(
+      'a locked spawn keeps its tube open until the next clear opens it',
+      () => rush(
+        Board(
+          tubes: [
+            [1, 1, 1],
+            [1],
+            [0, 2],
+            [2, 0],
+            [2, 2, 2],
+          ],
+          tubeSize: 4,
+        ),
+        onScore: lockScores.add,
+      ),
+      (game) async {
+        _prepare(game);
+        game.autoSpawn = false;
+        game.spawnBlock(2, locked: true);
+        _runUntilSettled(game);
+        // Full and one color, but locked: not complete.
+        expect(game.board.tubes[4], [2, 2, 2, 2]);
+        expect(game.board.locked[4], {3});
+        expect(game.board.isComplete(4), isFalse);
+        expect(game.clears, 0);
+
+        // The 1 completes tube 0; that clear opens the lock in tube 4,
+        // which completes tube 4 too: a combo of 2.
+        game.tapTube(1);
+        runUntil(game, () => game.board.isComplete(0));
+        expect(game.board.locked.every((s) => s.isEmpty), isTrue);
+        expect(game.board.isComplete(4), isTrue);
+        expect(game.clears, 2);
+        expect(game.score, 3);
+        expect(lockScores, [1, 3]);
+      },
+    );
+
+    final comboScores = <int>[];
+    final comboSounds = _FakeSounds();
+    testWithGame<ColorFlowGame>(
+      'clears in a row score +1, +2, +3; clears are counted apart',
+      () => rush(
+        Board(
+          tubes: [
+            [0, 0, 0],
+            [0, 0, 0],
+            [0, 0, 0],
+            [1, 0, 0, 0],
+            <int>[],
+          ],
+          tubeSize: 4,
+        ),
+        onScore: comboScores.add,
+        sounds: comboSounds,
+      ),
+      (game) async {
+        _prepare(game);
+        game.autoSpawn = false;
+        // Three 0s complete tubes 2, 1 and 0 within the combo window.
+        game.tapTube(3);
+        _runUntilSettled(game);
+        expect(game.combo, 3);
+        expect(comboScores, [1, 3, 6]);
+        expect(game.score, 6);
+        expect(game.hud.value.score, 6);
+        expect(game.clears, 3);
+        expect(comboSounds.events.where((e) => e.startsWith('complete')), [
+          'complete 1',
+          'complete 2',
+          'complete 3',
+        ]);
+        // Spawn speed uses clears, not the score.
+        expect(game.spawnInterval, closeTo(rushSpawnInterval(3), 1e-9));
+      },
+    );
+
+    testWithGame<ColorFlowGame>(
+      'the board grows by clears, not by score',
+      () => rush(clearBoard()),
+      (game) async {
+        _prepare(game);
+        game.autoSpawn = false;
+        game.score = 100;
+        game.clears = 8;
+        game.tapTube(1);
+        runUntil(game, () => game.board.tubes[0].isEmpty);
+        expect(game.score, 101);
+        expect(game.clears, 9);
+        expect(game.board.tubeCount, 5);
+        expect(game.config.colorCount, 3);
       },
     );
   });

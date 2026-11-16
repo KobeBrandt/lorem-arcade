@@ -174,34 +174,79 @@ class Board {
 /// so that eligibility checks see the tube as it will be.
 class TubeReservations {
   TubeReservations(int tubeCount)
-    : incoming = List.generate(tubeCount, (_) => <int>[]);
+    : incoming = List.generate(tubeCount, (_) => <int>[]),
+      incomingLocked = List.generate(tubeCount, (_) => <bool>[]);
 
   final List<List<int>> incoming;
 
+  /// Per tube, parallel to [incoming]: true for a locked block (rush).
+  final List<List<bool>> incomingLocked;
+
   /// A tube accepts [color] when it has free space and is empty or its
   /// top (counting incoming blocks) matches. Rainbows match anything.
-  /// Nothing lands on a locked top.
+  /// Nothing lands on a locked top, or on a locked block still falling in.
   bool accepts(Board board, int tube, int color) {
     final t = board.tubes[tube];
     final pending = incoming[tube];
     final used = t.length + pending.length;
     if (used >= board.tubeSize) return false;
     if (used == 0) return true;
+    if (incomingLocked[tube].contains(true)) return false;
     if (pending.isEmpty && board.isLocked(tube, t.length - 1)) return false;
     final top = pending.isNotEmpty ? pending.last : t.last;
     return top == color || top == Board.rainbow || color == Board.rainbow;
   }
 
-  /// Tracks one more tube (see [Board.addTube]).
-  void addTube() => incoming.add(<int>[]);
+  /// Rush spawns: a tube takes any color when it has free space and its
+  /// top (counting incoming blocks) is not locked.
+  bool hasRoom(Board board, int tube) {
+    final t = board.tubes[tube];
+    final pending = incoming[tube];
+    if (t.length + pending.length >= board.tubeSize) return false;
+    if (incomingLocked[tube].contains(true)) return false;
+    if (pending.isEmpty && t.isNotEmpty && board.isLocked(tube, t.length - 1)) {
+      return false;
+    }
+    return true;
+  }
 
-  void reserve(int tube, int color) => incoming[tube].add(color);
+  /// Tracks one more tube (see [Board.addTube]).
+  void addTube() {
+    incoming.add(<int>[]);
+    incomingLocked.add(<bool>[]);
+  }
+
+  void reserve(int tube, int color, {bool locked = false}) {
+    incoming[tube].add(color);
+    incomingLocked[tube].add(locked);
+  }
 
   /// Called when the first reserved block of [tube] lands.
   int land(Board board, int tube) {
     final color = incoming[tube].removeAt(0);
+    final locked = incomingLocked[tube].removeAt(0);
     board.tubes[tube].add(color);
+    if (locked) board.locked[tube].add(board.tubes[tube].length - 1);
     return color;
+  }
+
+  /// Lands the reserved block of [tube] with [color] and [locked], even
+  /// when blocks reach the tube in another order than they were reserved
+  /// (rush). A locked block stays locked in the tube.
+  void landBlock(Board board, int tube, int color, {bool locked = false}) {
+    final pending = incoming[tube];
+    final flags = incomingLocked[tube];
+    var i = 0;
+    for (var k = 0; k < pending.length; k++) {
+      if (pending[k] == color && flags[k] == locked) {
+        i = k;
+        break;
+      }
+    }
+    pending.removeAt(i);
+    flags.removeAt(i);
+    board.tubes[tube].add(color);
+    if (locked) board.locked[tube].add(board.tubes[tube].length - 1);
   }
 
   /// Lands every reserved block.
