@@ -47,6 +47,13 @@ class Board {
 
   int get tubeCount => tubes.length;
 
+  /// Adds an empty tube on the right (rush mode).
+  void addTube() {
+    tubes.add(<int>[]);
+    locked.add(<int>{});
+    hidden.add(<int>{});
+  }
+
   bool isLocked(int tube, int index) => locked[tube].contains(index);
 
   bool isHidden(int tube, int index) => hidden[tube].contains(index);
@@ -184,6 +191,9 @@ class TubeReservations {
     final top = pending.isNotEmpty ? pending.last : t.last;
     return top == color || top == Board.rainbow || color == Board.rainbow;
   }
+
+  /// Tracks one more tube (see [Board.addTube]).
+  void addTube() => incoming.add(<int>[]);
 
   void reserve(int tube, int color) => incoming[tube].add(color);
 

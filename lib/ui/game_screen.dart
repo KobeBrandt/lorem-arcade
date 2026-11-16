@@ -78,6 +78,14 @@ class _GameScreenState extends State<GameScreen> {
           progress.addEndlessPoints(1);
         },
       ),
+      GameMode.rush => ColorFlowGame(
+        mode: mode,
+        style: style,
+        sounds: sounds,
+        haptics: haptics,
+        // Saved on every point, so the best score survives a quit.
+        onScore: progress.reportRushScore,
+      ),
       _ => ColorFlowGame(
         mode: mode,
         initialLevel: progress.level(mode),
@@ -110,8 +118,11 @@ class _GameScreenState extends State<GameScreen> {
   void _closeTutorial() {
     widget.progress.markTutorialSeen(widget.mode);
     setState(() => _showTutorial = false);
-    // The clock ran while the card was open: start the level fresh.
-    if (widget.mode == GameMode.timed) _game.retryLevel();
+    // The clock (or the rush spawner) ran while the card was open:
+    // start fresh.
+    if (widget.mode == GameMode.timed || widget.mode == GameMode.rush) {
+      _game.retryLevel();
+    }
   }
 
   Future<void> _shareDaily() async {
@@ -169,7 +180,9 @@ class _GameScreenState extends State<GameScreen> {
 
   Widget _failed(BuildContext context, ColorFlowGame game) => ResultBanner(
     title: game.failReason,
-    message: 'Try the same level again.',
+    message: game.mode == GameMode.rush
+        ? 'Score ${game.hud.value.score ?? 0}. Start a new run.'
+        : 'Try the same level again.',
     actionLabel: 'Retry',
     onAction: game.retryLevel,
     onHome: _home,

@@ -64,6 +64,8 @@ class StatsScreen extends StatelessWidget {
           _Row('Best score', '${p.endlessBest}'),
           _Row('Points earned', '${p.endlessPoints}'),
         ];
+      case GameMode.rush:
+        return [_Row('Best score', '${p.rushBest}')];
       case GameMode.daily:
         return [
           _Row('Current streak', '${p.dailyStreak(DateTime.now())}'),

@@ -62,7 +62,11 @@ class Hud extends StatelessWidget {
                         icon: endless
                             ? Icons.skip_next_rounded
                             : Icons.refresh_rounded,
-                        tooltip: endless ? 'Skip board' : 'Retry level',
+                        tooltip: endless
+                            ? 'Skip board'
+                            : (game.mode == GameMode.rush
+                                  ? 'New run'
+                                  : 'Retry level'),
                         onPressed: game.restartPressed,
                       ),
                     ],
@@ -109,9 +113,10 @@ class _Title extends StatelessWidget {
     final title = switch (mode) {
       GameMode.daily => weekdayNames[day.weekday - 1],
       GameMode.endless => 'Board $level',
+      GameMode.rush => mode.title,
       _ => 'Level $level',
     };
-    if (mode == GameMode.levels) {
+    if (mode == GameMode.levels || mode == GameMode.rush) {
       return Text(title, style: AppText.title, overflow: TextOverflow.ellipsis);
     }
     return Column(

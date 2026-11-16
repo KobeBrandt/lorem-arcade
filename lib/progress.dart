@@ -12,6 +12,8 @@ class Progress {
 
   static const String _endlessBestKey = 'endless_best';
 
+  static const String _rushBestKey = 'rush_best';
+
   /// Points earned in all endless runs together; 5 points give 1 star.
   static const String _endlessPointsKey = 'endless_points';
 
@@ -47,6 +49,12 @@ class Progress {
 
   Future<void> reportEndlessScore(int score) async {
     if (score > endlessBest) await _prefs.setInt(_endlessBestKey, score);
+  }
+
+  int get rushBest => _prefs.getInt(_rushBestKey) ?? 0;
+
+  Future<void> reportRushScore(int score) async {
+    if (score > rushBest) await _prefs.setInt(_rushBestKey, score);
   }
 
   int get endlessPoints => _prefs.getInt(_endlessPointsKey) ?? 0;

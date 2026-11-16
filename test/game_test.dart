@@ -482,4 +482,211 @@ void main() {
       expect(game.board.key(), _board().key());
     },
   );
+
+  group('Rush', () {
+    /// Every tube full and mixed: nothing can land and nothing completes.
+    Board fullBoard() => Board(
+      tubes: [
+        [0, 1, 0, 1],
+        [1, 0, 1, 0],
+        [0, 2, 0, 2],
+        [2, 0, 2, 0],
+        [1, 2, 1, 2],
+      ],
+      tubeSize: 4,
+    );
+
+    /// Tube 0 needs one more 1; a tap on tube 1 sends that 1.
+    Board clearBoard() => Board(
+      tubes: [
+        [1, 1, 1],
+        [1],
+        [0, 2],
+        [2, 0],
+        <int>[],
+      ],
+      tubeSize: 4,
+    );
+
+    ColorFlowGame rush(
+      Board board, {
+      ValueChanged<int>? onScore,
+      GameSounds sounds = const SilentSounds(),
+    }) => ColorFlowGame(
+      mode: GameMode.rush,
+      levelSource: _source(board, solution: 0),
+      haptics: false,
+      onScore: onScore,
+      sounds: sounds,
+    );
+
+    void runUntil(ColorFlowGame game, bool Function() done) {
+      for (var i = 0; i < 60 * 30 && !done(); i++) {
+        game.update(1 / 60);
+      }
+      expect(done(), isTrue, reason: 'condition not reached in 30 s');
+    }
+
+    test('config grows after 10 and 25 clears; spawns speed up', () {
+      expect(GameMode.rush.hasLevels, isFalse);
+      final start = LevelConfig.rush(0);
+      expect(
+        [start.colorCount, start.tubeCount, start.tubeSize, start.loopCapacity],
+        [3, 5, 4, 6],
+      );
+      expect(LevelConfig.rush(9).tubeCount, 5);
+      expect(LevelConfig.rush(10).colorCount, 4);
+      expect(LevelConfig.rush(10).tubeCount, 6);
+      expect(LevelConfig.rush(24).tubeCount, 6);
+      expect(LevelConfig.rush(25).colorCount, 5);
+      expect(LevelConfig.rush(25).tubeCount, 7);
+      expect(rushSpawnInterval(0), 3);
+      expect(rushSpawnInterval(1), closeTo(2.85, 1e-9));
+      expect(rushSpawnInterval(2), closeTo(2.7075, 1e-9));
+      expect(rushSpawnInterval(100), 1);
+    });
+
+    testWithGame<ColorFlowGame>(
+      'starts with 2 random blocks per tube and an empty belt',
+      () => ColorFlowGame(mode: GameMode.rush, haptics: false),
+      (game) async {
+        _prepare(game, slide: false);
+        expect(game.status, GameStatus.playing);
+        expect(game.board.tubeCount, 5);
+        expect(game.board.tubeSize, 4);
+        for (var i = 0; i < 5; i++) {
+          expect(game.board.tubes[i], hasLength(2));
+          expect(game.board.tubes[i].every((c) => c >= 0 && c < 3), isTrue);
+          expect(game.board.isComplete(i), isFalse);
+        }
+        expect(game.hud.value.loopCount, 0);
+        expect(game.hud.value.loopCapacity, 6);
+        expect(game.hud.value.score, 0);
+      },
+    );
+
+    testWithGame<ColorFlowGame>(
+      'a block spawns every 3 s, faster after clears',
+      () => rush(fullBoard()),
+      (game) async {
+        _prepare(game, slide: false);
+        _run(game, 2.9);
+        expect(game.hud.value.loopCount, 0);
+        _run(game, 0.2);
+        expect(game.hud.value.loopCount, 1);
+        _run(game, 2.7);
+        expect(game.hud.value.loopCount, 1);
+        _run(game, 0.2);
+        expect(game.hud.value.loopCount, 2);
+        // 10 clears: 3 s x 0.95^10, about 1.8 s.
+        game.score = 10;
+        expect(game.spawnInterval, closeTo(1.796, 0.001));
+        _run(game, 1.85);
+        expect(game.hud.value.loopCount, 3);
+      },
+    );
+
+    final clearScores = <int>[];
+    final clearSounds = _FakeSounds();
+    testWithGame<ColorFlowGame>(
+      'a full tube bursts, scores a point and empties',
+      () => rush(clearBoard(), onScore: clearScores.add, sounds: clearSounds),
+      (game) async {
+        _prepare(game);
+        game.tapTube(1);
+        runUntil(game, () => game.board.isComplete(0));
+        expect(game.hud.value.score, 1);
+        expect(clearScores, [1]);
+        expect(clearSounds.events, contains('complete 1'));
+        // A bursting tube cannot be tapped.
+        game.tapTube(0);
+        expect(game.board.tubes[0], [1, 1, 1, 1]);
+        expect(game.taps, 1);
+        runUntil(game, () => game.board.tubes[0].isEmpty);
+        expect(game.hud.value.score, 1);
+        expect(game.status, GameStatus.playing);
+        expect(game.spawnInterval, closeTo(2.85, 1e-9));
+      },
+    );
+
+    testWithGame<ColorFlowGame>(
+      'waiting blocks are planned again after a tube empties',
+      () => rush(
+        Board(
+          tubes: [
+            [1, 1, 1],
+            [0, 1],
+            [2, 0, 2, 0],
+            [0, 2, 0, 2],
+            [0, 2],
+          ],
+          tubeSize: 4,
+        ),
+      ),
+      (game) async {
+        _prepare(game);
+        // No tube takes a 2: it waits on the loop.
+        game.tapTube(4);
+        // The 1 completes tube 0 and it empties before the first spawn.
+        game.tapTube(1);
+        runUntil(game, () => game.board.isComplete(0));
+        expect(game.hud.value.loopCount, greaterThanOrEqualTo(1));
+        runUntil(game, () => game.board.tubes[0].isEmpty);
+        expect(game.hud.value.loopCount, 1);
+        // The waiting 2 now lands in the empty tube.
+        runUntil(game, () => game.board.tubes[0].isNotEmpty);
+        expect(game.board.tubes[0].first, 2);
+      },
+    );
+
+    testWithGame<ColorFlowGame>(
+      'after 10 clears a new color and an empty tube join',
+      () => rush(clearBoard()),
+      (game) async {
+        _prepare(game);
+        game.score = 9;
+        game.tapTube(1);
+        runUntil(game, () => game.board.tubeCount == 6);
+        expect(game.score, 10);
+        expect(game.config.colorCount, 4);
+        expect(game.board.tubes[5], isEmpty);
+        expect(game.board.tubes[0], isEmpty);
+        // The new tube is drawn and can take blocks.
+        game.render(Canvas(PictureRecorder()));
+        expect(game.reservations.accepts(game.board, 5, 3), isTrue);
+        game.spawnBlock(3);
+        runUntil(game, () => game.hud.value.loopCount == 0);
+        expect(
+          game.board.tubes[0].contains(3) || game.board.tubes[5].contains(3),
+          isTrue,
+        );
+      },
+    );
+
+    testWithGame<ColorFlowGame>(
+      'a full belt that goes a lap without landing ends the run',
+      () => rush(fullBoard()),
+      (game) async {
+        _prepare(game, slide: false);
+        // 6 spawns (3 s apart) fill the belt; nothing can land.
+        _run(game, 18.2);
+        expect(game.hud.value.loopCount, 6);
+        expect(game.status, GameStatus.playing);
+        // Full belt: no tap fits.
+        game.tapTube(0);
+        expect(game.taps, 0);
+        runUntil(game, () => game.status == GameStatus.failed);
+        expect(game.failReason, 'Belt overflow');
+        expect(game.hud.value.loopCount, 6);
+
+        // Retry starts a fresh run.
+        game.score = 3;
+        game.restartPressed();
+        await Future<void>.delayed(Duration.zero);
+        expect(game.status, GameStatus.playing);
+        expect(game.score, 0);
+        expect(game.hud.value.loopCount, 0);
+      },
+    );
+  });
 }

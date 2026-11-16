@@ -23,6 +23,9 @@ String tutorialText(GameMode mode) => switch (mode) {
   GameMode.beltFull =>
     'The loop starts full. Let blocks land to make room '
         'before you can send new ones.',
+  GameMode.rush =>
+    'New blocks keep joining the loop, faster after every clear. '
+        'Fill a tube with one color to clear it. Do not let the loop overflow.',
 };
 
 /// Glass card over a dimmed game with the tutorial text and 'Got it'.

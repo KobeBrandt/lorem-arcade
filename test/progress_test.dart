@@ -66,6 +66,21 @@ void main() {
     });
   });
 
+  group('Rush best', () {
+    test('keeps the best rush score under rush_best', () async {
+      final prefs = await _prefs();
+      final p = Progress(prefs);
+      expect(p.rushBest, 0);
+      await p.reportRushScore(7);
+      await p.reportRushScore(4);
+      expect(p.rushBest, 7);
+      expect(prefs.getInt('rush_best'), 7);
+      // Separate from endless, and no stars.
+      expect(p.endlessBest, 0);
+      expect(p.totalStars, 0);
+    });
+  });
+
   group('Daily longest streak', () {
     test('grows with the streak and stays after a missed day', () async {
       final p = Progress(await _prefs());

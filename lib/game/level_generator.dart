@@ -20,6 +20,24 @@ class Puzzle {
   final int solutionLength;
 }
 
+/// Rush start: every tube gets [perTube] random blocks of the active
+/// colors and the loop is empty. With fewer blocks than the tube size no
+/// tube can be complete. No solver: rush is endless survival.
+Puzzle rushStart(
+  LevelConfig config,
+  Random random, {
+  int perTube = 2,
+}) => Puzzle(
+  board: Board(
+    tubes: [
+      for (var t = 0; t < config.tubeCount; t++)
+        [for (var i = 0; i < perTube; i++) random.nextInt(config.colorCount)],
+    ],
+    tubeSize: config.tubeSize,
+  ),
+  solutionLength: 0,
+);
+
 /// Builds random levels and keeps only those the solver can finish.
 class LevelGenerator {
   LevelGenerator({Random? random}) : _random = random ?? Random();

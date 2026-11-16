@@ -1,3 +1,5 @@
+import 'dart:math';
+
 import 'level_config.dart';
 
 enum GameMode {
@@ -6,7 +8,8 @@ enum GameMode {
   timed('Timed', 'Beat the clock. Bigger levels give more time.'),
   daily('Daily puzzle', 'One puzzle a day, the same for everyone.'),
   endless('Endless', 'Boards keep coming. Score a point per sorted tube.'),
-  beltFull('Belt full', 'The loop starts full. Make room before you can tap.');
+  beltFull('Belt full', 'The loop starts full. Make room before you can tap.'),
+  rush('Rush', 'Blocks keep coming. Fill tubes to clear them.');
 
   const GameMode(this.title, this.description);
 
@@ -17,8 +20,9 @@ enum GameMode {
   bool get hasLevels =>
       this == levels || this == moves || this == timed || this == beltFull;
 
-  LevelConfig configFor(int level) =>
-      LevelConfig.forLevel(level, beltFull: this == beltFull);
+  LevelConfig configFor(int level) => this == rush
+      ? LevelConfig.rush(0)
+      : LevelConfig.forLevel(level, beltFull: this == beltFull);
 }
 
 /// Move limit: the solver's tap count plus 50%, rounded up.
@@ -26,6 +30,10 @@ int moveLimitFor(int solutionLength) => (solutionLength * 1.5).ceil();
 
 /// Timed: 6 seconds per block on the board.
 int secondsFor(LevelConfig config) => config.blockCount * 6;
+
+/// Rush: seconds between two new blocks. 3 s at the start, 5% shorter
+/// after every clear, at least 1 s.
+double rushSpawnInterval(int clears) => max(1.0, 3.0 * pow(0.95, clears));
 
 /// Daily puzzle size by weekday, Monday small to Sunday big.
 const List<int> dailyLevels = [1, 6, 10, 16, 20, 25, 30];

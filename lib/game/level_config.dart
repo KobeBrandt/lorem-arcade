@@ -33,6 +33,16 @@ class LevelConfig {
     );
   }
 
+  /// Rush mode: 3 colors, a 4th after 10 clears and a 5th after 25.
+  /// Tube size 4, loop capacity 6, 2 more tubes than colors.
+  factory LevelConfig.rush(int clears) => LevelConfig(
+    level: 1,
+    colorCount: clears >= 25 ? 5 : (clears >= 10 ? 4 : 3),
+    tubeSize: 4,
+    loopCapacity: 6,
+    emptyTubes: 2,
+  );
+
   final int level;
   final int colorCount;
   final int tubeSize;

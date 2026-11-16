@@ -36,6 +36,7 @@ class _HomeScreenState extends State<HomeScreen> {
     GameMode.daily: Icons.calendar_today_rounded,
     GameMode.endless: Icons.all_inclusive_rounded,
     GameMode.beltFull: Icons.sync_rounded,
+    GameMode.rush: Icons.bolt_rounded,
   };
 
   Future<void> _open(GameMode mode) => _push(
@@ -64,6 +65,8 @@ class _HomeScreenState extends State<HomeScreen> {
             : '${weekdayNames[today.weekday - 1]} · streak $days';
       case GameMode.endless:
         return 'Best ${p.endlessBest}';
+      case GameMode.rush:
+        return 'Best ${p.rushBest}';
       default:
         return 'Level ${p.level(mode)}';
     }
