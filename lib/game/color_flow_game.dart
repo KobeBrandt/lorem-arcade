@@ -1024,8 +1024,9 @@ class ColorFlowGame extends FlameGame with TapCallbacks {
     // Wide screens: loop on the left half, tubes on the right half.
     final landscape = w > h;
 
-    // The Flutter HUD sits below the status bar.
-    final loopTop = _topInset + _hudHeight + 16;
+    // The Flutter HUD sits below the status bar. Keep the board card
+    // (which starts above the loop path) 12 dp below the HUD's loop bar.
+    final loopTop = _topInset + _hudHeight + 12 + _channelWidth / 2 + 8;
     final cardTop = loopTop - _channelWidth / 2 - 8;
     final tubesBottom = h - max(24.0, _bottomInset + 16);
     if (landscape) {
