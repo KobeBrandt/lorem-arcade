@@ -1,4 +1,4 @@
-package com.example.color_flow
+package kbrandt.dev.color_flow
 
 import io.flutter.embedding.android.FlutterActivity
 

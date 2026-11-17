@@ -3,7 +3,8 @@ import java.util.Properties
 
 // Release signing: android/key.properties (git-ignored) holds storeFile,
 // storePassword, keyAlias and keyPassword. Without it, release builds
-// fall back to the debug key so `flutter run --release` still works.
+// fall back to the debug key so `flutter run --release` still works, and a
+// warning is printed because such a build must not be uploaded to Play.
 val keystoreProperties = Properties()
 val keystorePropertiesFile = rootProject.file("key.properties")
 if (keystorePropertiesFile.exists()) {
@@ -17,7 +18,7 @@ plugins {
 }
 
 android {
-    namespace = "com.example.color_flow"
+    namespace = "kbrandt.dev.color_flow"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
@@ -70,4 +71,20 @@ kotlin {
 
 flutter {
     source = "../.."
+}
+
+if (!keystorePropertiesFile.exists()) {
+    // Warn only when a release variant is actually built, not on every sync.
+    tasks.matching { it.name.startsWith("assemble") || it.name.startsWith("bundle") }
+        .matching { it.name.contains("Release") }
+        .configureEach {
+            doFirst {
+                // Flutter runs Gradle in quiet mode, which hides warn-level
+                // messages; quiet-level messages always show.
+                logger.quiet(
+                    "WARNING: key.properties not found: release build is signed with the DEBUG key. " +
+                        "Not for Play Store upload.",
+                )
+            }
+        }
 }
