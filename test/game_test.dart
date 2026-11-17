@@ -1,3 +1,5 @@
+import 'dart:async';
+import 'dart:convert';
 import 'dart:math';
 import 'dart:ui' show Canvas, PictureRecorder;
 
@@ -7,8 +9,10 @@ import 'package:color_flow/game/game_feedback.dart';
 import 'package:color_flow/game/game_mode.dart';
 import 'package:color_flow/game/level_config.dart';
 import 'package:color_flow/game/level_generator.dart';
+import 'package:flame/events.dart' show TapDownEvent;
 import 'package:flame/game.dart';
 import 'package:flame_test/flame_test.dart';
+import 'package:flutter/gestures.dart' show PointerDeviceKind;
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -75,7 +79,7 @@ void _runUntilSettled(ColorFlowGame game) {
 /// With [slide], waits until the tubes have slid in and taps work.
 void _prepare(ColorFlowGame game, {bool slide = true}) {
   game.onGameResize(Vector2(411, 891));
-  for (final name in ['stuck', 'failed', 'won']) {
+  for (final name in ['stuck', 'failed', 'won', 'loading']) {
     game.overlays.addEntry(name, (_, _) => const SizedBox());
   }
   if (slide) _finishSlide(game);
@@ -172,21 +176,26 @@ void main() {
   });
 
   testWithGame<ColorFlowGame>(
-    'taps are ignored while the tubes slide in',
+    'a tap during the slide-in is queued until the slide ends',
     _game,
     (game) async {
       _prepare(game, slide: false);
       expect(game.isSliding, isTrue);
       final start = game.board.key();
+      final expected = applyCleanMove(game.board, 0, 3)!;
+      // Only the last tap is kept.
+      game.tapTube(1);
       game.tapTube(0);
       expect(game.board.key(), start);
       expect(game.taps, 0);
       _run(game, 0.3);
       expect(game.isSliding, isTrue);
+      expect(game.taps, 0);
       _finishSlide(game);
-      game.tapTube(0);
-      expect(game.board.key(), isNot(start));
+      game.update(1 / 60);
       expect(game.taps, 1);
+      _runUntilSettled(game);
+      expect(game.board.key(), expected.key());
     },
   );
 
@@ -951,6 +960,454 @@ void main() {
         expect(game.clears, 9);
         expect(game.board.tubeCount, 5);
         expect(game.config.colorCount, 3);
+      },
+    );
+  });
+
+  group('Layout', () {
+    Board eightTubes() => Board(
+      tubes: [
+        [0, 1],
+        [1, 0],
+        [2, 2],
+        [0],
+        [1],
+        [2],
+        <int>[],
+        <int>[],
+      ],
+      tubeSize: 4,
+    );
+
+    void expectSeparateTapRects(ColorFlowGame game, Vector2 screen) {
+      final rects = [
+        for (var i = 0; i < game.tubeCount; i++) game.tubeTapRect(i),
+      ];
+      for (var i = 0; i < rects.length; i++) {
+        final r = rects[i];
+        expect(r.width, greaterThanOrEqualTo(48), reason: 'tube $i');
+        expect(r.left, greaterThanOrEqualTo(0), reason: 'tube $i');
+        expect(r.right, lessThanOrEqualTo(screen.x + 1e-6), reason: 'tube $i');
+        expect(r.bottom, lessThanOrEqualTo(screen.y + 1e-6), reason: 'tube $i');
+        for (var j = i + 1; j < rects.length; j++) {
+          expect(r.overlaps(rects[j]), isFalse, reason: 'tubes $i and $j');
+        }
+      }
+    }
+
+    testWithGame<ColorFlowGame>(
+      'more than 6 tubes: two rows with tap areas at least 48 wide',
+      () => ColorFlowGame(levelSource: _source(eightTubes()), haptics: false),
+      (game) async {
+        _prepare(game);
+        final screen = Vector2(360, 760);
+        game.onGameResize(screen);
+        expect(game.tubeCount, 8);
+        expectSeparateTapRects(game, screen);
+        // Interleaved: even tubes in the top row, odd tubes below.
+        final top = game.tubeTapRect(0);
+        for (var i = 0; i < 8; i++) {
+          final r = game.tubeTapRect(i);
+          if (i.isEven) {
+            expect(r.top, top.top, reason: 'tube $i');
+          } else {
+            expect(r.top, greaterThanOrEqualTo(top.bottom - 1e-6));
+            expect(r.top, game.tubeTapRect(1).top, reason: 'tube $i');
+          }
+        }
+
+        // A real tap in the middle of tube 1 (bottom row).
+        final expected = applyCleanMove(game.board, 1, 3)!;
+        final at = game.tubeTapRect(1).center;
+        game.onTapDown(
+          TapDownEvent(
+            1,
+            game,
+            TapDownDetails(
+              globalPosition: at,
+              localPosition: at,
+              kind: PointerDeviceKind.touch,
+            ),
+          ),
+        );
+        game.update(1 / 60);
+        game.textScale = 2.5;
+        game.render(Canvas(PictureRecorder()));
+        _runUntilSettled(game);
+        expect(game.board.tubes, expected.tubes);
+      },
+    );
+
+    testWithGame<ColorFlowGame>(
+      'each drop point is above its tube, in tube order',
+      () => ColorFlowGame(levelSource: _source(eightTubes()), haptics: false),
+      (game) async {
+        _prepare(game);
+        for (final screen in [Vector2(360, 760), Vector2(411, 891)]) {
+          game.onGameResize(screen);
+          for (var i = 0; i < game.tubeCount; i++) {
+            final x = game.tubeTapRect(i).center.dx;
+            expect(game.tubeDropX(i), closeTo(x, 1e-3), reason: 'tube $i');
+            if (i > 0) {
+              expect(x, greaterThan(game.tubeTapRect(i - 1).center.dx));
+            }
+          }
+        }
+        // Landscape: tubes and drops each keep the tube order.
+        game.onGameResize(Vector2(900, 420));
+        for (var i = 1; i < game.tubeCount; i++) {
+          expect(
+            game.tubeTapRect(i).center.dx,
+            greaterThan(game.tubeTapRect(i - 1).center.dx),
+          );
+          expect(game.tubeDropX(i), greaterThan(game.tubeDropX(i - 1)));
+        }
+      },
+    );
+
+    testWithGame<ColorFlowGame>(
+      'landscape: tubes on the right half, taps still work',
+      _game,
+      (game) async {
+        _prepare(game);
+        final portrait = game.tubeTapRect(0);
+        final screen = Vector2(900, 420);
+        game.onGameResize(screen);
+        expect(game.tubeCount, 5);
+        expectSeparateTapRects(game, screen);
+        for (var i = 0; i < 5; i++) {
+          expect(game.tubeTapRect(i).left, greaterThanOrEqualTo(450));
+        }
+        expect(game.tubeTapRect(0), isNot(portrait));
+
+        final expected = applyCleanMove(game.board, 0, 3)!;
+        game.tapTube(0);
+        game.update(1 / 60);
+        game.render(Canvas(PictureRecorder()));
+        _runUntilSettled(game);
+        expect(game.board.tubes, expected.tubes);
+
+        // Back to portrait at runtime.
+        game.onGameResize(Vector2(411, 891));
+        expect(game.tubeTapRect(0), portrait);
+      },
+    );
+
+    testWithGame<ColorFlowGame>(
+      'landscape with two rows',
+      () => ColorFlowGame(levelSource: _source(eightTubes()), haptics: false),
+      (game) async {
+        _prepare(game);
+        final screen = Vector2(900, 420);
+        game.onGameResize(screen);
+        expectSeparateTapRects(game, screen);
+        final expected = applyCleanMove(game.board, 5, 3)!;
+        game.tapTube(5);
+        _runUntilSettled(game);
+        expect(game.board.tubes, expected.tubes);
+      },
+    );
+  });
+
+  group('Save and restore', () {
+    /// A different board, so a restore that did not happen shows.
+    LevelSource otherSource() => _source(
+      Board(
+        tubes: [
+          [2, 2, 1],
+          [0],
+          [1, 0],
+          <int>[],
+          <int>[],
+        ],
+        tubeSize: 4,
+      ),
+    );
+
+    Map<String, Object?> roundTrip(Map<String, Object?> saved) =>
+        jsonDecode(jsonEncode(saved)) as Map<String, Object?>;
+
+    testWithGame<ColorFlowGame>(
+      'keeps the last settled board, taps and moves left',
+      () => _game(mode: GameMode.moves),
+      (game) async {
+        _prepare(game);
+        expect(game.saveState()!['taps'], 0);
+        game.tapTube(0);
+        _runUntilSettled(game);
+        final settled = game.board.copy();
+        game.tapTube(2);
+        expect(game.isSettled, isFalse);
+        final saved = game.saveState()!;
+        expect(roundTrip(saved), saved);
+        expect(saved['mode'], 'moves');
+        expect(saved['taps'], 1);
+        expect(saved['movesLeft'], 4); // limit 5 (3 x 1.5), one used
+
+        final restored = await initializeGame(
+          () => ColorFlowGame(
+            mode: GameMode.moves,
+            restoreState: roundTrip(saved),
+            levelSource: otherSource(),
+            haptics: false,
+          ),
+        );
+        expect(restored.status, GameStatus.playing);
+        expect(restored.isSliding, isFalse);
+        expect(restored.board.key(), settled.key());
+        expect(restored.taps, 1);
+        expect(restored.hasProgress, isTrue);
+        expect(restored.hud.value.movesLeft, 4);
+        // Retry plays the original puzzle from the start.
+        restored.retryLevel();
+        expect(restored.board.key(), _board().key());
+        expect(restored.taps, 0);
+        restored.onRemove();
+      },
+    );
+
+    final timedSaves = <Map<String, Object?>>[];
+    testWithGame<ColorFlowGame>(
+      'keeps the time left in timed mode',
+      () => _game(mode: GameMode.timed),
+      (game) async {
+        _prepare(game);
+        _run(game, 10);
+        game.tapTube(0);
+        _runUntilSettled(game);
+        final saved = roundTrip(game.saveState()!);
+        timedSaves.add(saved);
+        final timeLeft = saved['timeLeft']! as double;
+        expect(timeLeft, lessThan(62.5));
+        expect(timeLeft, greaterThan(55));
+
+        final restored = await initializeGame(
+          () => ColorFlowGame(
+            mode: GameMode.timed,
+            restoreState: saved,
+            levelSource: otherSource(),
+            haptics: false,
+          ),
+        );
+        expect(restored.board.key(), game.board.key());
+        expect(restored.hud.value.secondsLeft, timeLeft.ceil());
+        expect(restored.taps, 1);
+        restored.onRemove();
+      },
+    );
+
+    for (final (name, create)
+        in <(String, ColorFlowGame Function(Map<String, Object?>))>[
+          (
+            'another mode',
+            (s) => ColorFlowGame(
+              restoreState: s,
+              levelSource: otherSource(),
+              haptics: false,
+            ),
+          ),
+          (
+            'another level',
+            (s) => ColorFlowGame(
+              mode: GameMode.timed,
+              initialLevel: 2,
+              restoreState: s,
+              levelSource: otherSource(),
+              haptics: false,
+            ),
+          ),
+          (
+            'invalid data',
+            (s) => ColorFlowGame(
+              mode: GameMode.timed,
+              restoreState: {
+                ...s,
+                'board': {'tubes': 'broken'},
+              },
+              levelSource: otherSource(),
+              haptics: false,
+            ),
+          ),
+        ]) {
+      test('a save for $name is ignored', () async {
+        expect(timedSaves, isNotEmpty, reason: 'needs the timed save test');
+        final game = await initializeGame(() => create(timedSaves.first));
+        expect(game.status, GameStatus.playing);
+        expect(game.taps, 0);
+        expect(game.board.tubes[0], [2, 2, 1]);
+        game.onRemove();
+      });
+    }
+
+    testWithGame<ColorFlowGame>(
+      'nothing to save in rush, endless or after a win',
+      () => _game(mode: GameMode.endless),
+      (game) async {
+        _prepare(game);
+        expect(game.saveState(), isNull);
+        final rush = await initializeGame(
+          () => ColorFlowGame(mode: GameMode.rush, haptics: false),
+        );
+        expect(rush.saveState(), isNull);
+        rush.onRemove();
+      },
+    );
+  });
+
+  group('Pause, progress and accessibility', () {
+    testWithGame<ColorFlowGame>(
+      'pause stops the timer and ignores taps',
+      () => _game(mode: GameMode.timed),
+      (game) async {
+        _prepare(game);
+        game.pause();
+        expect(game.isPaused, isTrue);
+        _run(game, 5);
+        expect(game.hud.value.secondsLeft, 72);
+        game.tapTube(0);
+        expect(game.taps, 0);
+        game.resume();
+        expect(game.isPaused, isFalse);
+        _run(game, 1.1);
+        expect(game.hud.value.secondsLeft, 71);
+        game.tapTube(0);
+        expect(game.taps, 1);
+      },
+    );
+
+    testWithGame<ColorFlowGame>(
+      'pause stops rush spawns and the belt',
+      () => ColorFlowGame(
+        mode: GameMode.rush,
+        levelSource: _source(
+          Board(
+            tubes: [
+              [0, 1, 0, 1],
+              [1, 0, 1, 0],
+              [0, 2, 0, 2],
+              [2, 0, 2, 0],
+              [1, 2, 1, 2],
+            ],
+            tubeSize: 4,
+          ),
+          solution: 0,
+        ),
+        haptics: false,
+      ),
+      (game) async {
+        _prepare(game, slide: false);
+        game.pause();
+        _run(game, 6);
+        expect(game.hud.value.loopCount, 0);
+        game.resume();
+        _run(game, 3.1);
+        expect(game.hud.value.loopCount, 1);
+      },
+    );
+
+    testWithGame<ColorFlowGame>('hasProgress after an accepted tap', _game, (
+      game,
+    ) async {
+      _prepare(game);
+      expect(game.hasProgress, isFalse);
+      game.tapTube(3); // empty tube: not accepted
+      expect(game.hasProgress, isFalse);
+      game.tapTube(0);
+      expect(game.hasProgress, isTrue);
+      game.retryLevel();
+      expect(game.hasProgress, isFalse);
+    });
+
+    testWithGame<ColorFlowGame>(
+      'tube labels and layout version',
+      () => ColorFlowGame(
+        levelSource: _source(
+          Board(
+            tubes: [
+              [0, 0, 0, 0],
+              [1, 2],
+              [2, Board.rainbow],
+              [0, 1, 2, 2],
+              <int>[],
+            ],
+            tubeSize: 4,
+            locked: [
+              <int>{},
+              {1},
+              <int>{},
+              <int>{},
+              <int>{},
+            ],
+            hidden: [
+              <int>{},
+              <int>{},
+              <int>{},
+              {0, 1},
+              <int>{},
+            ],
+          ),
+        ),
+        haptics: false,
+      ),
+      (game) async {
+        _prepare(game);
+        expect(game.tubeCount, 5);
+        expect(
+          [for (var i = 0; i < 5; i++) game.tubeLabel(i)],
+          [
+            'Tube 1, 4 of 4 blocks, sorted',
+            'Tube 2, 2 of 4 blocks, locked top',
+            'Tube 3, 2 of 4 blocks, top: rainbow x1',
+            'Tube 4, 4 of 4 blocks, top: blue x2, 2 hidden blocks',
+            'Tube 5, empty',
+          ],
+        );
+        final version = game.layoutVersion.value;
+        game.tapTube(3);
+        expect(game.layoutVersion.value, greaterThan(version));
+        final afterTap = game.layoutVersion.value;
+        _runUntilSettled(game);
+        expect(game.layoutVersion.value, greaterThan(afterTap));
+        expect(
+          game.tubeLabel(3),
+          'Tube 4, 2 of 4 blocks, top: yellow x1, 1 hidden block',
+        );
+      },
+    );
+
+    Completer<Puzzle>? pendingBuild;
+    testWithGame<ColorFlowGame>(
+      'the loading overlay shows while a level builds',
+      () {
+        final game = ColorFlowGame(
+          levelSource: (_, _) =>
+              pendingBuild?.future ??
+              Future.value(Puzzle(board: _board(), solutionLength: 3)),
+          haptics: false,
+        );
+        game.overlays.addEntry('loading', (_, _) => const SizedBox());
+        return game;
+      },
+      (game) async {
+        _prepare(game);
+        expect(game.overlays.isActive('loading'), isFalse);
+
+        pendingBuild = Completer();
+        final next = game.startLevel(2);
+        expect(game.overlays.isActive('loading'), isTrue);
+        expect(game.saveState(), isNull);
+        pendingBuild!.complete(Puzzle(board: _board(), solutionLength: 3));
+        await next;
+        expect(game.overlays.isActive('loading'), isFalse);
+        expect(game.status, GameStatus.playing);
+
+        pendingBuild = Completer();
+        final failing = game.startLevel(3);
+        expect(game.overlays.isActive('loading'), isTrue);
+        pendingBuild!.completeError(StateError('no level'));
+        await failing;
+        expect(game.overlays.isActive('loading'), isFalse);
+        expect(game.status, GameStatus.failed);
       },
     );
   });

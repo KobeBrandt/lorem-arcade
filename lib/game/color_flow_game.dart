@@ -146,8 +146,26 @@ class _Sparkle {
   double life = 1;
 }
 
+/// The board at a moment when no blocks were moving, for [saveState].
+class _Snapshot {
+  _Snapshot({
+    required this.board,
+    required this.loop,
+    required this.taps,
+    required this.movesLeft,
+  });
+
+  final Board board;
+
+  /// Blocks still to put on the loop (belt-full start only).
+  final List<int> loop;
+  final int taps;
+  final int movesLeft;
+}
+
 class ColorFlowGame extends FlameGame with TapCallbacks {
   ColorFlowGame({
+    this.restoreState,
     this.mode = GameMode.levels,
     this.initialLevel = 1,
     this.seed,
@@ -164,6 +182,11 @@ class ColorFlowGame extends FlameGame with TapCallbacks {
 
   final GameMode mode;
   final int initialLevel;
+
+  /// A game saved with [saveState]. When it matches this mode (and level,
+  /// or seed for daily), the game continues from it instead of building
+  /// a new level. Invalid or mismatched data is ignored.
+  final Map<String, Object?>? restoreState;
 
   /// Fixed generator seed (daily mode), or null for a random level.
   final int? seed;
@@ -314,6 +337,23 @@ class ColorFlowGame extends FlameGame with TapCallbacks {
   bool _hintVisible = false;
   int _hintTube = 0;
 
+  /// A tap made while the tubes slide in, applied when the slide ends.
+  int? _queuedTap;
+
+  /// Paused by the app (for example when it goes to the background).
+  bool _paused = false;
+
+  /// The most recent board where nothing was moving, for [saveState].
+  _Snapshot? _settled;
+
+  /// Blocks put on the loop once the layout is ready (belt-full start).
+  List<int> _pendingLoop = const [];
+
+  /// Bumped on every relayout and every board change, so the Flutter
+  /// screen can rebuild its accessibility labels.
+  final ValueNotifier<int> layoutVersion = ValueNotifier(0);
+  bool _versionBumpScheduled = false;
+
   /// Top system inset (status bar), set by the Flutter screen.
   double _topInset = 0;
   set topInset(double value) {
@@ -322,20 +362,45 @@ class ColorFlowGame extends FlameGame with TapCallbacks {
     _relayout();
   }
 
+  /// Bottom system inset (navigation bar), set by the Flutter screen.
+  double _bottomInset = 0;
+  set bottomInset(double value) {
+    if (value == _bottomInset) return;
+    _bottomInset = value;
+    _relayout();
+  }
+
+  /// Height of the Flutter HUD below the top inset.
+  double _hudHeight = 96;
+  set hudHeight(double value) {
+    if (value == _hudHeight) return;
+    _hudHeight = value;
+    _relayout();
+  }
+
+  /// System text scale factor, used for all text drawn on the canvas.
+  double _textScale = 1;
+  set textScale(double value) {
+    if (value == _textScale) return;
+    _textScale = value;
+    _centerKey = '';
+    _comboPainter = null;
+  }
+
   // Layout.
   late Rect _loopRect;
-  late Rect _cardRect;
   late ui.Path _loopPath;
   late ui.PathMetric _metric;
   late List<Rect> _tubeRects;
-  late List<double> _tubeCenters;
+  late List<Rect> _tapRects;
   late List<double> _dropDistance;
-  late double _tubeSpacing;
   late double _slotHeight;
+  late double _tubeAreaCenter;
+  List<Rect> _cardRects = const [];
+  List<Paint> _cardFills = const [];
   bool _layoutReady = false;
 
   // Cached paints.
-  final Paint _cardFill = Paint();
   final Paint _cardBorder = Paint()
     ..style = PaintingStyle.stroke
     ..strokeWidth = 1
@@ -388,7 +453,10 @@ class ColorFlowGame extends FlameGame with TapCallbacks {
   )..layout();
 
   // Particle batch drawing.
-  late ui.Image _sprite;
+  ui.Image? _sprite;
+
+  /// Set by [disposeResources]; the notifiers must not change after it.
+  bool _resourcesDisposed = false;
   Float32List _transforms = Float32List(0);
   Float32List _rects = Float32List(0);
   Int32List _colors = Int32List(0);
@@ -420,7 +488,7 @@ class ColorFlowGame extends FlameGame with TapCallbacks {
   /// Rush: seconds between two new blocks right now.
   double get spawnInterval => rushSpawnInterval(_clears);
 
-  /// True while the tubes slide in; taps are ignored until it ends.
+  /// True while the tubes slide in; a tap is queued until it ends.
   bool get isSliding =>
       _board != null &&
       _slideTime < _slideDelay * (board.tubeCount - 1) + _slideDuration;
@@ -429,13 +497,110 @@ class ColorFlowGame extends FlameGame with TapCallbacks {
   @visibleForTesting
   bool get isSettled => _flying.isEmpty;
 
+  /// True while the game is paused: nothing moves and taps are ignored.
+  bool get isPaused => _paused;
+
+  /// Stops all updates (timer, spawns, belt) until [resume].
+  void pause() => _paused = true;
+
+  void resume() => _paused = false;
+
+  /// Frees [hud], [layoutVersion] and the particle sprite. Call once the
+  /// host is done with this game, after its last [saveState]; GameWidget
+  /// may attach a removed game again, so onRemove does not do this. Safe
+  /// to call more than once.
+  void disposeResources() {
+    if (_resourcesDisposed) return;
+    _resourcesDisposed = true;
+    hud.dispose();
+    layoutVersion.dispose();
+    _sprite?.dispose();
+    _sprite = null;
+  }
+
+  /// This attempt has an accepted tap (or, in rush and endless, a score).
+  bool get hasProgress =>
+      _taps > 0 ||
+      ((mode == GameMode.rush || mode == GameMode.endless) && _score > 0);
+
+  /// Number of tubes on screen (0 while there is no layout).
+  int get tubeCount => _layoutReady ? _tubeRects.length : 0;
+
+  /// Tap area of [tube] in game coordinates, as used for taps.
+  Rect tubeTapRect(int tube) => _layoutReady ? _tapRects[tube] : Rect.zero;
+
+  /// X of the point on the loop where blocks for [tube] drop off.
+  @visibleForTesting
+  double tubeDropX(int tube) => _pointOnLoop(_dropDistance[tube], 0).dx;
+
+  /// Color names for accessibility labels, per color id.
+  static const List<String> colorNames = [
+    'pink',
+    'yellow',
+    'blue',
+    'green',
+    'orange',
+    'purple',
+  ];
+
+  static String _colorName(int color) => color == Board.rainbow
+      ? 'rainbow'
+      : (color >= 0 && color < colorNames.length
+            ? colorNames[color]
+            : 'color ${color + 1}');
+
+  /// Screen reader label for [tube], for example
+  /// 'Tube 3, 4 of 6 blocks, top: pink x2'.
+  String tubeLabel(int tube) {
+    final b = _board;
+    final name = 'Tube ${tube + 1}';
+    if (b == null || tube < 0 || tube >= b.tubeCount) return name;
+    final t = b.tubes[tube];
+    if (t.isEmpty) return '$name, empty';
+    final parts = <String>['$name, ${t.length} of ${b.tubeSize} blocks'];
+    if (b.isComplete(tube)) {
+      parts.add('sorted');
+    } else if (b.isLocked(tube, t.length - 1)) {
+      parts.add('locked top');
+    } else {
+      parts.add('top: ${_colorName(t.last)} x${b.topRunLength(tube)}');
+    }
+    final hidden = b.hidden[tube].length;
+    if (hidden > 0) {
+      parts.add('$hidden hidden ${hidden == 1 ? 'block' : 'blocks'}');
+    }
+    return parts.join(', ');
+  }
+
+  void _bumpVersion() {
+    if (_resourcesDisposed) return;
+    final binding = SchedulerBinding.instance;
+    if (binding.schedulerPhase == SchedulerPhase.persistentCallbacks) {
+      if (_versionBumpScheduled) return;
+      _versionBumpScheduled = true;
+      binding.addPostFrameCallback((_) {
+        _versionBumpScheduled = false;
+        if (!_resourcesDisposed) layoutVersion.value++;
+      });
+    } else {
+      layoutVersion.value++;
+    }
+  }
+
   // Transparent: the Flutter screen paints the gradient background.
   @override
   Color backgroundColor() => const Color(0x00000000);
 
   @override
   Future<void> onLoad() async {
-    _sprite = await _buildSprite();
+    final sprite = await _buildSprite();
+    if (_resourcesDisposed) {
+      sprite.dispose();
+      return;
+    }
+    _sprite = sprite;
+    final saved = restoreState;
+    if (saved != null && _restore(saved)) return;
     await startLevel(initialLevel);
   }
 
@@ -446,6 +611,10 @@ class ColorFlowGame extends FlameGame with TapCallbacks {
     status = GameStatus.loading;
     _requestedLevel = newLevel;
     _removeResultOverlays();
+    // The app registers 'loading'; tests and other hosts may not.
+    if (overlays.registeredOverlays.contains('loading')) {
+      overlays.add('loading');
+    }
     _publishHudFor(newLevel);
 
     final newConfig = mode.configFor(newLevel);
@@ -455,6 +624,7 @@ class ColorFlowGame extends FlameGame with TapCallbacks {
     } catch (_) {
       if (token != _loadToken) return;
       _buildFailed = true;
+      overlays.remove('loading');
       _fail('Could not build a level');
       return;
     }
@@ -500,16 +670,170 @@ class ColorFlowGame extends FlameGame with TapCallbacks {
 
   Future<void> nextLevel() => startLevel(level + 1, save: true);
 
+  // ----------------------------------------------------------- save/restore
+
+  static const int _saveVersion = 1;
+
+  /// The game as a JSON-encodable map, to continue later through
+  /// [restoreState]. Level modes only; null in rush and endless, while
+  /// loading, and once the level is won or failed. While blocks move,
+  /// this is the most recent board where nothing moved.
+  Map<String, Object?>? saveState() {
+    if (mode == GameMode.rush || mode == GameMode.endless) return null;
+    if (status == GameStatus.loading ||
+        status == GameStatus.won ||
+        status == GameStatus.failed) {
+      return null;
+    }
+    final puzzle = _puzzle;
+    if (puzzle == null || _board == null) return null;
+    final now = _flying.isEmpty && !_loopPending
+        ? _Snapshot(
+            board: board,
+            loop: const [],
+            taps: _taps,
+            movesLeft: _movesLeft,
+          )
+        : _settled;
+    if (now == null) return null;
+    return {
+      'version': _saveVersion,
+      'mode': mode.name,
+      'level': level,
+      'seed': seed,
+      'puzzle': {
+        ..._boardToJson(puzzle.board, puzzle.loop),
+        'solutionLength': puzzle.solutionLength,
+      },
+      'board': _boardToJson(now.board, now.loop),
+      'taps': now.taps,
+      'elapsed': _playTime,
+      'timeLeft': _timeLeft,
+      'movesLeft': now.movesLeft,
+      'score': _score,
+    };
+  }
+
+  static Map<String, Object?> _boardToJson(Board b, List<int> loop) => {
+    'tubeSize': b.tubeSize,
+    'tubes': [for (final t in b.tubes) List<int>.of(t)],
+    'locked': [for (final s in b.locked) s.toList()..sort()],
+    'hidden': [for (final s in b.hidden) s.toList()..sort()],
+    'loop': List<int>.of(loop),
+  };
+
+  static int _int(Object? v) => (v! as num).toInt();
+
+  static List<int> _ints(Object? v) => [for (final e in v! as List) _int(e)];
+
+  /// Reads a board saved by [_boardToJson]; throws on invalid data.
+  (Board, List<int>) _boardFromJson(Object? json) {
+    final map = json! as Map;
+    final tubeSize = _int(map['tubeSize']);
+    final tubes = [for (final t in map['tubes']! as List) _ints(t)];
+    final locked = [for (final s in map['locked']! as List) _ints(s).toSet()];
+    final hidden = [for (final s in map['hidden']! as List) _ints(s).toSet()];
+    final loop = _ints(map['loop']);
+    bool validColor(int c) =>
+        c == Board.rainbow || (c >= 0 && c < style.palette.length);
+    if (tubeSize <= 0 ||
+        tubes.length < 2 ||
+        locked.length != tubes.length ||
+        hidden.length != tubes.length ||
+        !loop.every(validColor)) {
+      throw const FormatException('Invalid board');
+    }
+    for (var i = 0; i < tubes.length; i++) {
+      final n = tubes[i].length;
+      if (n > tubeSize ||
+          !tubes[i].every(validColor) ||
+          locked[i].any((k) => k < 0 || k >= n) ||
+          hidden[i].any((k) => k < 0 || k >= n)) {
+        throw const FormatException('Invalid tube');
+      }
+    }
+    return (
+      Board(tubes: tubes, tubeSize: tubeSize, locked: locked, hidden: hidden),
+      loop,
+    );
+  }
+
+  /// Continues from [saved] when it matches this game. Returns false (and
+  /// changes nothing) for mismatched or invalid data.
+  bool _restore(Map<String, Object?> saved) {
+    try {
+      if (mode == GameMode.rush || mode == GameMode.endless) return false;
+      if (saved['version'] != _saveVersion) return false;
+      if (saved['mode'] != mode.name) return false;
+      final savedLevel = _int(saved['level']);
+      if (mode == GameMode.daily) {
+        final savedSeed = saved['seed'];
+        if (seed == null || savedSeed == null || _int(savedSeed) != seed) {
+          return false;
+        }
+      } else if (savedLevel != initialLevel) {
+        return false;
+      }
+      final (puzzleBoard, puzzleLoop) = _boardFromJson(saved['puzzle']);
+      final solution = _int((saved['puzzle']! as Map)['solutionLength']);
+      final (current, loop) = _boardFromJson(saved['board']);
+      if (current.tubeCount != puzzleBoard.tubeCount ||
+          current.tubeSize != puzzleBoard.tubeSize) {
+        return false;
+      }
+      final taps = _int(saved['taps']);
+      final movesLeft = _int(saved['movesLeft']);
+      final elapsed = (saved['elapsed']! as num).toDouble();
+      final timeLeft = (saved['timeLeft']! as num).toDouble();
+      final score = _int(saved['score']);
+      if (taps < 0 || movesLeft < 0 || elapsed < 0 || timeLeft < 0) {
+        return false;
+      }
+      if (mode == GameMode.timed && timeLeft <= 0) return false;
+
+      _loadToken++;
+      _buildFailed = false;
+      level = savedLevel;
+      _requestedLevel = savedLevel;
+      config = mode.configFor(savedLevel);
+      _puzzle = Puzzle(
+        board: puzzleBoard,
+        loop: puzzleLoop,
+        solutionLength: solution,
+      );
+      _begin(
+        from: _Snapshot(
+          board: current,
+          loop: loop,
+          taps: taps,
+          movesLeft: movesLeft,
+        ),
+      );
+      _playTime = elapsed;
+      _timeLeft = timeLeft;
+      _score = score;
+      // A restored board is shown right away, without the slide-in.
+      _slideTime = double.infinity;
+      _publishHud();
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
   void _removeResultOverlays() {
     overlays.remove('won');
     overlays.remove('stuck');
     overlays.remove('failed');
   }
 
-  void _begin() {
+  /// Starts the current puzzle, or continues from [from] (a restored game).
+  void _begin({_Snapshot? from}) {
+    overlays.remove('loading');
     final puzzle = _puzzle!;
-    final newBoard = puzzle.board.copy();
+    final newBoard = (from?.board ?? puzzle.board).copy();
     _board = newBoard;
+    _queuedTap = null;
     _layoutReady = false;
     reservations = TubeReservations(newBoard.tubeCount);
     _flying.clear();
@@ -535,14 +859,25 @@ class ColorFlowGame extends FlameGame with TapCallbacks {
     }
     _movesLeft = moveLimitFor(puzzle.solutionLength);
     _timeLeft = secondsFor(config).toDouble();
-    _hintVisible = mode == GameMode.levels && level == 1;
+    _pendingLoop = List<int>.of(from?.loop ?? puzzle.loop);
+    if (from != null) {
+      _taps = from.taps;
+      _movesLeft = from.movesLeft;
+    }
+    _settled = _Snapshot(
+      board: newBoard.copy(),
+      loop: _pendingLoop,
+      taps: _taps,
+      movesLeft: _movesLeft,
+    );
+    _hintVisible = mode == GameMode.levels && level == 1 && _taps == 0;
     if (_hintVisible) {
       final path = Solver(config.loopCapacity, 60000).solve(newBoard);
       _hintTube = (path == null || path.isEmpty) ? 0 : path.first;
     }
     _removeResultOverlays();
     status = GameStatus.playing;
-    _loopPending = puzzle.loop.isNotEmpty;
+    _loopPending = _pendingLoop.isNotEmpty;
     _relayout();
     _publishHud();
   }
@@ -550,7 +885,7 @@ class ColorFlowGame extends FlameGame with TapCallbacks {
   /// Belt-full start: the loop blocks are spread evenly around the loop.
   void _spawnLoop() {
     _loopPending = false;
-    final loop = _puzzle!.loop;
+    final loop = _pendingLoop;
     final len = _metric.length;
     for (var i = 0; i < loop.length; i++) {
       final block = _FlyingBlock(
@@ -635,6 +970,7 @@ class ColorFlowGame extends FlameGame with TapCallbacks {
   void _publishHud() => _publishHudFor(level);
 
   void _publishHudFor(int shownLevel) {
+    if (_resourcesDisposed) return;
     final value = HudState(
       level: shownLevel,
       loopCount: _board == null ? 0 : _loopCount,
@@ -649,7 +985,9 @@ class ColorFlowGame extends FlameGame with TapCallbacks {
     );
     final binding = SchedulerBinding.instance;
     if (binding.schedulerPhase == SchedulerPhase.persistentCallbacks) {
-      binding.addPostFrameCallback((_) => hud.value = value);
+      binding.addPostFrameCallback((_) {
+        if (!_resourcesDisposed) hud.value = value;
+      });
     } else {
       hud.value = value;
     }
@@ -677,15 +1015,34 @@ class ColorFlowGame extends FlameGame with TapCallbacks {
     const cardMargin = 8.0;
     const pathInset = cardMargin + 6 + _channelWidth / 2;
     const bottomRadius = 20.0;
+    const rowGap = 28.0;
+    // Space above and below a tube that still counts as a tap on it.
+    const tapReach = 24.0;
 
-    // HUD: title row (56) + gap + loop bar (8) + gap, below the status bar.
-    final loopTop = _topInset + 110;
-    _loopRect = Rect.fromLTRB(
-      pathInset,
-      loopTop,
-      w - pathInset,
-      max(loopTop + 180, h * 0.44),
-    );
+    final n = board.tubeCount;
+    final rows = n > 6 ? 2 : 1;
+    // Wide screens: loop on the left half, tubes on the right half.
+    final landscape = w > h;
+
+    // The Flutter HUD sits below the status bar.
+    final loopTop = _topInset + _hudHeight + 16;
+    final cardTop = loopTop - _channelWidth / 2 - 8;
+    final tubesBottom = h - max(24.0, _bottomInset + 16);
+    if (landscape) {
+      _loopRect = Rect.fromLTRB(
+        pathInset,
+        loopTop,
+        w / 2 - 4 - 6 - _channelWidth / 2,
+        max(loopTop + 120, tubesBottom + 20 - 8 - _channelWidth / 2),
+      );
+    } else {
+      _loopRect = Rect.fromLTRB(
+        pathInset,
+        loopTop,
+        w - pathInset,
+        rows == 1 ? max(loopTop + 180, h * 0.44) : max(loopTop + 160, h * 0.38),
+      );
+    }
     final l = _loopRect;
     final topRadius = min(48.0, l.height / 3);
 
@@ -727,66 +1084,144 @@ class ColorFlowGame extends FlameGame with TapCallbacks {
       ..close();
     _metric = _loopPath.computeMetrics().first;
 
-    // Tubes use the full straight edge; each tap column is one spacing wide.
-    final n = board.tubeCount;
+    // Drop points: one per tube along the straight bottom edge, tube 0 on
+    // the left, so blocks pass the tubes in the order the rules expect.
+    // Tube x order must equal tube index order (and so drop order).
     final span = straightRight - straightLeft - 8;
-    _tubeSpacing = min(76.0, span / (n - 1));
-    final groupStart =
-        (straightLeft + straightRight) / 2 - _tubeSpacing * (n - 1) / 2;
-    final tubeWidth = min(_tubeSpacing * 0.74, 60.0);
+    final dropStep = min(76.0, span / (n - 1));
+    final dropStart =
+        (straightLeft + straightRight) / 2 - dropStep * (n - 1) / 2;
+    _dropDistance = [
+      for (var i = 0; i < n; i++) straightRight - (dropStart + dropStep * i),
+    ];
 
-    final tubeTop = l.bottom + 52;
-    final maxTubeHeight = h - 72 - tubeTop;
-    _slotHeight = min((maxTubeHeight - _tubePad * 2) / config.tubeSize, 64.0);
+    // Tube area: below the loop, or the right half on a wide screen.
+    // Tubes are interleaved: tube i sits in row i % 2, one half step to
+    // the right of tube i - 1, so x grows with the tube index. Tubes in
+    // one row are [spacing] apart, and each tap column is that wide.
+    final double tubeTop;
+    final double step;
+    final double firstX;
+    Rect? tubeCard;
+    if (landscape) {
+      tubeCard = Rect.fromLTRB(
+        w / 2 + 4,
+        cardTop,
+        w - cardMargin,
+        tubesBottom + 20,
+      );
+      tubeTop = cardTop + 12 + tapReach;
+      // The outermost tap columns reach half a row spacing past the
+      // first and last tube.
+      step = min(76.0, (tubeCard.width - 16) / (n - 1 + rows));
+      _tubeAreaCenter = tubeCard.center.dx;
+      firstX = _tubeAreaCenter - step * (n - 1) / 2;
+    } else {
+      // Every tube sits right under its drop point.
+      tubeTop = l.bottom + 52;
+      step = dropStep;
+      _tubeAreaCenter = (straightLeft + straightRight) / 2;
+      firstX = dropStart;
+    }
+    final spacing = step * rows;
+    final tubeWidth = min(spacing * 0.74, 60.0);
+    final available = tubesBottom - tubeTop - rowGap * (rows - 1);
+    _slotHeight = max(
+      4.0,
+      min((available - _tubePad * 2 * rows) / (config.tubeSize * rows), 64.0),
+    );
     final tubeHeight = _slotHeight * config.tubeSize + _tubePad * 2;
 
     _tubeRects = [];
-    _tubeCenters = [];
-    _dropDistance = [];
+    _tapRects = [];
     for (var i = 0; i < n; i++) {
-      final cx = groupStart + _tubeSpacing * i;
-      _tubeCenters.add(cx);
-      _tubeRects.add(
-        Rect.fromLTWH(cx - tubeWidth / 2, tubeTop, tubeWidth, tubeHeight),
+      final row = i % rows;
+      final cx = firstX + step * i;
+      final top = tubeTop + row * (tubeHeight + rowGap);
+      final rect = Rect.fromLTWH(
+        cx - tubeWidth / 2,
+        top,
+        tubeWidth,
+        tubeHeight,
       );
-      _dropDistance.add(straightRight - cx);
+      _tubeRects.add(rect);
+      // Two rows split the gap between them.
+      final tapTop = row == 0 ? top - tapReach : top - rowGap / 2;
+      final tapBottom = row == rows - 1
+          ? rect.bottom + tapReach
+          : rect.bottom + rowGap / 2;
+      // Neighbors in a row share the exact same edge value.
+      _tapRects.add(
+        Rect.fromLTRB(
+          firstX + step * (i - rows / 2),
+          tapTop,
+          firstX + step * (i + rows / 2),
+          tapBottom,
+        ),
+      );
     }
-    _cardRect = Rect.fromLTRB(
-      cardMargin,
-      l.top - _channelWidth / 2 - 8,
-      w - cardMargin,
-      _tubeRects.first.bottom + 20,
-    );
-    _cardFill.shader = ui.Gradient.linear(
-      _cardRect.topCenter,
-      _cardRect.bottomCenter,
-      [AppColors.glassFill, AppColors.glassFillLow],
-    );
+    final lastBottom = _tubeRects.map((r) => r.bottom).reduce(max);
+    _cardRects = landscape
+        ? [
+            Rect.fromLTRB(
+              cardMargin,
+              cardTop,
+              w / 2 - 4,
+              l.bottom + _channelWidth / 2 + 8,
+            ),
+            Rect.fromLTRB(
+              tubeCard!.left,
+              tubeCard.top,
+              tubeCard.right,
+              max(lastBottom + 20, l.bottom + _channelWidth / 2 + 8),
+            ),
+          ]
+        : [Rect.fromLTRB(cardMargin, cardTop, w - cardMargin, lastBottom + 20)];
+    _cardFills = [
+      for (final card in _cardRects)
+        Paint()
+          ..shader = ui.Gradient.linear(card.topCenter, card.bottomCenter, [
+            AppColors.glassFill,
+            AppColors.glassFillLow,
+          ]),
+    ];
     final glyphSize = min(tubeWidth - _tubePad * 2, _slotHeight) * 0.5;
-    _questionPainter = _glyph('?', glyphSize, null);
+    _questionPainter = _glyph('?', glyphSize, null, _markColor(_hiddenColor));
     _lockPainter = _glyph(
       String.fromCharCode(Icons.lock_rounded.codePoint),
       glyphSize,
       Icons.lock_rounded,
+      _markColor(_lockedColor),
     );
     _layoutReady = true;
+    _bumpVersion();
     if (_loopPending) _spawnLoop();
   }
 
-  TextPainter _glyph(String text, double fontSize, IconData? icon) =>
-      TextPainter(
-        textDirection: TextDirection.ltr,
-        text: TextSpan(
-          text: text,
-          style: TextStyle(
-            fontSize: fontSize,
-            fontWeight: FontWeight.w800,
-            fontFamily: icon?.fontFamily,
-            package: icon?.fontPackage,
-            color: const Color(0xCCFFFFFF),
-          ),
-        ),
-      )..layout();
+  /// Shape and glyph color on a block: dark on light blocks, light on
+  /// dark blocks.
+  static Color _markColor(Color block) => block.computeLuminance() > 0.35
+      ? const Color(0x52000000)
+      : const Color(0x66FFFFFF);
+
+  TextPainter _glyph(
+    String text,
+    double fontSize,
+    IconData? icon,
+    Color color,
+  ) => TextPainter(
+    textDirection: TextDirection.ltr,
+    text: TextSpan(
+      text: text,
+      style: TextStyle(
+        fontSize: fontSize,
+        fontWeight: FontWeight.w800,
+        fontFamily: icon?.fontFamily,
+        package: icon?.fontPackage,
+        color: color,
+      ),
+    ),
+  )..layout();
 
   /// How far below its place a tube is during the slide-in.
   double _slideOffset(int tube) {
@@ -832,25 +1267,28 @@ class ColorFlowGame extends FlameGame with TapCallbacks {
 
   @override
   void onTapDown(TapDownEvent event) {
-    if (!_layoutReady || status == GameStatus.loading) return;
+    if (!_layoutReady || _paused || status == GameStatus.loading) return;
     final tube = _tubeAt(event.canvasPosition.toOffset());
     if (tube != null) tapTube(tube);
   }
 
-  /// Tube whose tap column contains [p], or null.
+  /// Tube whose tap area contains [p], or null.
   int? _tubeAt(Offset p) {
-    final top = _tubeRects.first.top - 24;
-    final bottom = _tubeRects.first.bottom + 24;
-    if (p.dy < top || p.dy > bottom) return null;
-    for (var i = 0; i < _tubeCenters.length; i++) {
-      if ((p.dx - _tubeCenters[i]).abs() <= _tubeSpacing / 2) return i;
+    for (var i = 0; i < _tapRects.length; i++) {
+      if (_tapRects[i].contains(p)) return i;
     }
     return null;
   }
 
-  @visibleForTesting
+  /// A tap on [tube] (also used by the accessibility layer). During the
+  /// slide-in the last tap is queued and applied when the slide ends.
   void tapTube(int tube) {
-    if (status != GameStatus.playing || isSliding) return;
+    if (_paused || status != GameStatus.playing) return;
+    if (tube < 0 || tube >= board.tubeCount) return;
+    if (isSliding) {
+      _queuedTap = tube;
+      return;
+    }
     _hintVisible = false;
     if (board.tubes[tube].isEmpty) return;
 
@@ -927,6 +1365,7 @@ class ColorFlowGame extends FlameGame with TapCallbacks {
     }
     _markProgress();
     _publishHud();
+    _bumpVersion();
   }
 
   /// A tap that does nothing: the tube shakes.
@@ -963,12 +1402,18 @@ class ColorFlowGame extends FlameGame with TapCallbacks {
 
   @override
   void update(double dt) {
+    if (_paused) return;
     super.update(dt);
     if (!_layoutReady || status == GameStatus.loading) return;
     final realDt = dt;
     dt = min(dt, 1 / 20);
     _time += dt;
     _slideTime += dt;
+    final queued = _queuedTap;
+    if (queued != null && !isSliding) {
+      _queuedTap = null;
+      tapTube(queued);
+    }
     if (status == GameStatus.playing) _playTime += realDt;
     if (_comboLabelTime > 0) _comboLabelTime = max(0, _comboLabelTime - dt);
 
@@ -1018,6 +1463,15 @@ class ColorFlowGame extends FlameGame with TapCallbacks {
       }
       _markProgress();
       _publishHud();
+      _bumpVersion();
+      if (_flying.isEmpty && !_loopPending) {
+        _settled = _Snapshot(
+          board: board.copy(),
+          loop: const [],
+          taps: _taps,
+          movesLeft: _movesLeft,
+        );
+      }
     }
 
     if (mode != GameMode.rush &&
@@ -1128,6 +1582,7 @@ class ColorFlowGame extends FlameGame with TapCallbacks {
     _markProgress();
     _planFromPositions();
     _publishHud();
+    _bumpVersion();
   }
 
   /// Rush game over: the loop is full, no tube is bursting, and every
@@ -1297,6 +1752,7 @@ class ColorFlowGame extends FlameGame with TapCallbacks {
       _comboPainterValue = _combo;
       _comboPainter = TextPainter(
         textDirection: TextDirection.ltr,
+        textScaler: TextScaler.linear(_textScale),
         text: TextSpan(
           text: 'Combo x$_combo',
           style: const TextStyle(
@@ -1311,7 +1767,7 @@ class ColorFlowGame extends FlameGame with TapCallbacks {
     final painter = _comboPainter!;
     final alpha = (_comboLabelTime / 0.3).clamp(0.0, 1.0);
     final at = Offset(
-      _cardRect.center.dx - painter.width / 2,
+      _tubeAreaCenter - painter.width / 2,
       _tubeRects.first.top - painter.height - 14,
     );
     canvas.saveLayer(
@@ -1324,12 +1780,14 @@ class ColorFlowGame extends FlameGame with TapCallbacks {
 
   // Frosted glass card behind the board.
   void _renderCard(Canvas canvas) {
-    final card = RRect.fromRectAndRadius(
-      _cardRect,
-      const Radius.circular(AppRadii.card),
-    );
-    canvas.drawRRect(card, _cardFill);
-    canvas.drawRRect(card, _cardBorder);
+    for (var i = 0; i < _cardRects.length; i++) {
+      final card = RRect.fromRectAndRadius(
+        _cardRects[i],
+        const Radius.circular(AppRadii.card),
+      );
+      canvas.drawRRect(card, _cardFills[i]);
+      canvas.drawRRect(card, _cardBorder);
+    }
   }
 
   void _renderLoop(Canvas canvas) {
@@ -1357,9 +1815,11 @@ class ColorFlowGame extends FlameGame with TapCallbacks {
 
   /// Inside the loop: the level 1 hint, or the loop counter.
   void _renderCenter(Canvas canvas) {
-    final key = _hintVisible
+    final content = _hintVisible
         ? 'hint'
         : 'count:$_loopCount/${config.loopCapacity}';
+    // The loop size is part of the key: the text must fit inside it.
+    final key = '$content@${_loopRect.size}';
     if (key != _centerKey) {
       _centerKey = key;
       final TextSpan span;
@@ -1389,11 +1849,28 @@ class ColorFlowGame extends FlameGame with TapCallbacks {
           ],
         );
       }
-      _centerPainter = TextPainter(
-        text: span,
-        textAlign: TextAlign.center,
-        textDirection: TextDirection.ltr,
-      )..layout(maxWidth: _loopRect.width - _channelWidth * 2 - 32);
+      // System text scale, shrunk when needed so the text fits the loop.
+      final maxWidth = max(1.0, _loopRect.width - _channelWidth * 2 - 32);
+      final maxHeight = max(1.0, _loopRect.height - _channelWidth * 2 - 8);
+      var scale = _textScale;
+      while (true) {
+        final painter = TextPainter(
+          text: span,
+          textAlign: TextAlign.center,
+          textDirection: TextDirection.ltr,
+          textScaler: TextScaler.linear(scale),
+        );
+        if (_hintVisible) {
+          painter.layout(maxWidth: maxWidth);
+        } else {
+          // The counter must not wrap.
+          painter.layout();
+        }
+        _centerPainter = painter;
+        final fits = painter.height <= maxHeight && painter.width <= maxWidth;
+        if (fits || scale <= 0.3) break;
+        scale *= 0.9;
+      }
     }
     final painter = _centerPainter!;
     painter.paint(
@@ -1482,6 +1959,7 @@ class ColorFlowGame extends FlameGame with TapCallbacks {
             slot.center - Offset(glyph.width / 2, glyph.height / 2 - 1),
           );
         } else if (color != Board.rainbow && style.showShapes) {
+          _symbolPaint.color = _markColor(style.palette[color]);
           _drawSymbol(
             canvas,
             color,
@@ -1547,6 +2025,8 @@ class ColorFlowGame extends FlameGame with TapCallbacks {
   }
 
   void _renderParticles(Canvas canvas) {
+    final sprite = _sprite;
+    if (sprite == null) return;
     var count = 0;
     for (final b in _flying) {
       count += b.particles.length;
@@ -1581,7 +2061,7 @@ class ColorFlowGame extends FlameGame with TapCallbacks {
     }
 
     canvas.drawRawAtlas(
-      _sprite,
+      sprite,
       Float32List.sublistView(_transforms, 0, n * 4),
       Float32List.sublistView(_rects, 0, n * 4),
       Int32List.sublistView(_colors, 0, n),
@@ -1591,11 +2071,19 @@ class ColorFlowGame extends FlameGame with TapCallbacks {
     );
   }
 
-  /// Rush: a lock glyph on locked blocks riding the loop.
+  /// Marks on blocks riding the loop: a lock glyph on locked blocks (rush),
+  /// and the color's shape on the others, so they are not color-only.
   void _renderBeltLocks(Canvas canvas) {
     for (final b in _flying) {
-      if (!b.locked || b.phase != _Phase.looping) continue;
+      if (b.phase != _Phase.looping) continue;
       final at = _pointOnLoop(b.distance - _blockLength / 2, 0);
+      if (!b.locked) {
+        if (b.color != Board.rainbow && style.showShapes) {
+          _symbolPaint.color = _markColor(style.palette[b.color]);
+          _drawSymbol(canvas, b.color, at, _channelWidth * 0.5);
+        }
+        continue;
+      }
       _lockPainter.paint(
         canvas,
         at - Offset(_lockPainter.width / 2, _lockPainter.height / 2),
