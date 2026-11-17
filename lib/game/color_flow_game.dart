@@ -905,8 +905,9 @@ class ColorFlowGame extends FlameGame with TapCallbacks {
   }
 
   /// Gives waiting blocks a target tube, exactly like [settleLoop] in the
-  /// solver: the first waiting block that fits a tube takes the best one,
-  /// then the search starts again, until no waiting block fits. A block
+  /// solver: the waiting block with the best score takes its best tube
+  /// (ties: the first waiting block), then the search starts again, until
+  /// no waiting block fits. Rush spawns score 0, so they go last. A block
   /// only drops at its target, so the game always matches the solver.
   /// [order] gives the tubes in the order a block passes them; by default
   /// every block uses [order]. Rush passes [orderFor] instead, so each
@@ -916,21 +917,38 @@ class ColorFlowGame extends FlameGame with TapCallbacks {
     List<int> order, {
     List<int> Function(_FlyingBlock b)? orderFor,
   }) {
-    var changed = true;
-    while (changed) {
-      changed = false;
+    while (true) {
+      _FlyingBlock? best;
+      var bestTube = -1;
+      var bestScore = -1;
       for (final b in _waiting) {
         final tubes = orderFor?.call(b) ?? order;
         final target = b.spawned
             ? _messyTarget(b, tubes)
             : reservations.chooseTube(board, tubes, b.color);
         if (target == null) continue;
-        reservations.reserve(target, b.color, locked: b.locked);
-        b.target = target;
-        _waiting.remove(b);
-        changed = true;
-        break;
+        final s = b.spawned ? 0 : reservations.score(board, target, b.color)!;
+        if (s > bestScore) {
+          best = b;
+          bestTube = target;
+          bestScore = s;
+        }
       }
+      if (best == null) break;
+      reservations.reserve(bestTube, best.color, locked: best.locked);
+      best.target = bestTube;
+      _waiting.remove(best);
+    }
+  }
+
+  /// Takes the target away from every block still on the loop that was
+  /// heading for [tube] and puts it back with the waiting blocks.
+  void _releaseTargets(int tube) {
+    reservations.release(tube);
+    for (final b in _flying) {
+      if (b.target != tube || b.phase == _Phase.falling) continue;
+      b.target = -1;
+      _waiting.add(b);
     }
   }
 
@@ -1313,7 +1331,7 @@ class ColorFlowGame extends FlameGame with TapCallbacks {
     }
 
     // Blocks are still falling into this tube; wait until they land.
-    if (reservations.isBusy(tube)) {
+    if (_fallingInto[tube] > 0) {
       _reject(tube);
       return;
     }
@@ -1325,6 +1343,10 @@ class ColorFlowGame extends FlameGame with TapCallbacks {
       _publishHud();
       return;
     }
+
+    // Blocks on the loop that were heading here look for a tube again
+    // once the run has left.
+    if (reservations.isBusy(tube)) _releaseTargets(tube);
 
     _haptic(HapticFeedback.lightImpact);
     sounds.tap();

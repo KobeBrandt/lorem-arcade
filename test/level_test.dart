@@ -513,6 +513,21 @@ void main() {
       expect(next.tubes[0], [1, 0, 0, 0]);
       expect(left, [1]);
     });
+
+    test('a block that continues a run beats one that fits on a rainbow', () {
+      const r = Board.rainbow;
+      final board = Board(
+        tubes: [
+          [0, 0, 0, 0, r],
+          [2, 2, 2, 2, 2, 2],
+        ],
+        tubeSize: 6,
+      );
+      // The 1 comes first on the loop, but the 0 fits better (15 vs 11).
+      final (next, left) = settleLoop(board, [1, 0], [0, 1]);
+      expect(next.tubes[0], [0, 0, 0, 0, r, 0]);
+      expect(left, [1]);
+    });
   });
 
   group('GameMode', () {

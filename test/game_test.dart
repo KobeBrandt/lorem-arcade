@@ -492,6 +492,62 @@ void main() {
     },
   );
 
+  group('Rainbow on the loop', () {
+    const r = Board.rainbow;
+
+    testWithGame<ColorFlowGame>(
+      'the better fitting block takes the spot on a rainbow',
+      () => ColorFlowGame(
+        levelSource: _source(
+          Board(
+            tubes: [
+              [0, 0, r, 1],
+              [2, 2, 2, 2],
+            ],
+            tubeSize: 4,
+          ),
+          loop: [0],
+        ),
+        haptics: false,
+      ),
+      (game) async {
+        _prepare(game);
+        // The 1 leaves first, but the 0 continues the run under the rainbow.
+        game.tapTube(0);
+        _run(game, 8);
+        expect(game.board.tubes[0], [0, 0, r, 0]);
+      },
+    );
+
+    testWithGame<ColorFlowGame>(
+      'a rainbow can be tapped while a block on the loop heads for it',
+      () => ColorFlowGame(
+        levelSource: _source(
+          Board(
+            tubes: [
+              [0, 0, r],
+              [1, 1, 1, 1],
+              [2, 2, 2],
+            ],
+            tubeSize: 4,
+          ),
+          loop: [1],
+        ),
+        haptics: false,
+      ),
+      (game) async {
+        _prepare(game);
+        // The 1 on the loop is heading for the rainbow. The tap still works:
+        // the rainbow leaves and the 1 looks for a tube again.
+        game.tapTube(0);
+        expect(game.board.tubes[0], [0, 0]);
+        _run(game, 8);
+        expect(game.board.tubes[0], [0, 0]);
+        expect(game.board.tubes[2], [2, 2, 2, r]);
+      },
+    );
+  });
+
   group('Rush', () {
     /// Every tube full and mixed: nothing can land and nothing completes.
     Board fullBoard() => Board(

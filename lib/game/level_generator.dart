@@ -220,8 +220,10 @@ Board? applyCleanMove(Board board, int source, int loopCapacity) {
   return next;
 }
 
-/// Gives loop blocks a tube wherever they fit (best-tube score), again and
-/// again, until no block fits, then lands them. Blocks that never fit stay
+/// Gives loop blocks a tube wherever they fit, again and again, until no
+/// block fits, then lands them. Each round the block with the best score
+/// goes first (ties: the first one on the loop), so a block that continues
+/// a run beats one that only fits on a rainbow. Blocks that never fit stay
 /// on the loop. Completed tubes then open locked blocks. This is exactly
 /// what the game does when it plans targets.
 /// Returns the new board and the blocks left on the loop.
@@ -230,16 +232,22 @@ Board? applyCleanMove(Board board, int source, int loopCapacity) {
   final next = board.copy();
   final left = List<int>.of(loop);
   final reservations = TubeReservations(next.tubeCount);
-  var changed = true;
-  while (changed) {
-    changed = false;
+  while (true) {
+    int? bestIndex;
+    var bestTube = -1;
+    var bestScore = 0;
     for (var i = 0; i < left.length; i++) {
       final target = reservations.chooseTube(next, order, left[i]);
       if (target == null) continue;
-      reservations.reserve(target, left.removeAt(i));
-      changed = true;
-      break;
+      final s = reservations.score(next, target, left[i])!;
+      if (s > bestScore) {
+        bestIndex = i;
+        bestTube = target;
+        bestScore = s;
+      }
     }
+    if (bestIndex == null) break;
+    reservations.reserve(bestTube, left.removeAt(bestIndex));
   }
   reservations.landAll(next);
   next.settleCompletions(before);

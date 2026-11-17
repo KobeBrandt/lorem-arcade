@@ -281,6 +281,12 @@ class TubeReservations {
 
   bool isBusy(int tube) => incoming[tube].isNotEmpty;
 
+  /// Gives back every reservation of [tube] (its blocks stay on the loop).
+  void release(int tube) {
+    incoming[tube].clear();
+    incomingLocked[tube].clear();
+  }
+
   /// Routing score for putting [color] into [tube]; null when the tube
   /// does not accept it. Higher is better:
   /// - matching top: 10 + number of matching blocks on top (see
