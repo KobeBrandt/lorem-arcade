@@ -6,8 +6,12 @@
 /// The source tube is checked last (after one full lap).
 ///
 /// Special blocks:
-/// - Rainbow: stored as [Board.rainbow] in [tubes]. It is wild: it joins any
-///   run, any color lands on it, and it lands on any tube top.
+/// - Rainbow: stored as [Board.rainbow] in [tubes]. It is wild: any color
+///   lands on it, it lands on any tube top, and it counts as any color for a
+///   complete tube. A tap never takes it along with other blocks: a rainbow
+///   on top leaves alone (even from a complete tube), and a run below the
+///   top stops at a rainbow. So a rainbow in the wrong tube can always be
+///   moved again.
 /// - Locked: positions in [locked]. A locked block never moves, stops a
 ///   run, takes no blocks on top, and keeps its tube from being complete.
 ///   Every completed tube opens one locked block (see [unlockOne]).
@@ -81,8 +85,25 @@ class Board {
   }
 
   /// Length of the run a tap on [tube] sends into the loop. 0 when the
-  /// tube is empty or its top is locked.
-  int topRunLength(int tube) => runFor(tube, rainbow);
+  /// tube is empty or its top is locked. A rainbow on top leaves alone;
+  /// other runs stop at a rainbow.
+  int topRunLength(int tube) {
+    final t = tubes[tube];
+    final lock = locked[tube];
+    if (t.isEmpty || lock.contains(t.length - 1)) return 0;
+    final color = t.last;
+    if (color == rainbow) return 1;
+    var n = 0;
+    for (var i = t.length - 1; i >= 0; i--) {
+      if (lock.contains(i) || t[i] != color) break;
+      n++;
+    }
+    return n;
+  }
+
+  /// A tap is allowed on a complete tube only to move its rainbow out.
+  bool canTapComplete(int tube) =>
+      tubes[tube].isNotEmpty && tubes[tube].last == rainbow;
 
   /// Removes the top run of [tube] and returns it, top block first.
   /// The new top block is revealed.

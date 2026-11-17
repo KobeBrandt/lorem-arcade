@@ -198,7 +198,7 @@ class Solver {
 /// Simulates one tap on [source] where every block lands in its first lap.
 /// Returns null when the tap is not allowed or not clean.
 Board? applyCleanMove(Board board, int source, int loopCapacity) {
-  if (board.isComplete(source)) return null;
+  if (board.isComplete(source) && !board.canTapComplete(source)) return null;
   final run = board.topRunLength(source);
   if (run == 0 || run > loopCapacity) return null;
 
@@ -273,7 +273,9 @@ class LoopSolver {
     if (!_seen.add(key)) return false;
 
     for (var source = 0; source < board.tubeCount; source++) {
-      if (board.isComplete(source)) continue;
+      if (board.isComplete(source) && !board.canTapComplete(source)) {
+        continue;
+      }
       final run = board.topRunLength(source);
       if (run == 0 || loop.length + run > loopCapacity) continue;
       final tapped = board.copy();

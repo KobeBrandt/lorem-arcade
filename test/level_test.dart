@@ -291,7 +291,7 @@ void main() {
   group('Rainbow block', () {
     const r = Board.rainbow;
 
-    test('on top it leaves with the run under it, or alone', () {
+    test('on top it always leaves alone; runs stop at it', () {
       final board = Board(
         tubes: [
           [1, 0, 0, r],
@@ -309,10 +309,40 @@ void main() {
           <int>{},
         ],
       );
-      expect(board.topRunLength(0), 3);
+      expect(board.topRunLength(0), 1);
       expect(board.topRunLength(1), 1);
       expect(board.topRunLength(2), 1);
-      expect(board.copy().takeRun(0), [r, 0, 0]);
+      expect(board.copy().takeRun(0), [r]);
+      final below = Board(
+        tubes: [
+          [0, r, 0, 0],
+        ],
+        tubeSize: 4,
+      );
+      expect(below.topRunLength(0), 2);
+    });
+
+    test('a rainbow in a complete tube can still be moved out', () {
+      // Level 43 dead end: the rainbow sorted the pink tube, but one more
+      // pink is elsewhere and the blues are one short.
+      final board = Board(
+        tubes: [
+          [1, 1, 1],
+          [0, 0, 0, r],
+          [0],
+          <int>[],
+        ],
+        tubeSize: 4,
+      );
+      expect(board.isComplete(1), isTrue);
+      expect(board.canTapComplete(1), isTrue);
+      final next = applyCleanMove(board, 1, 3)!;
+      // The rainbow leaves alone and lands on the 1s (13 beats 11 for [0]).
+      expect(next.tubes[0], [1, 1, 1, r]);
+      expect(next.tubes[1], [0, 0, 0]);
+      final done = applyCleanMove(next, 2, 3)!;
+      expect(done.isWon, isTrue);
+      expect(Solver(3, 60000).canSolve(board), isTrue);
     });
 
     test('any color lands on a rainbow top, scored as a match', () {
@@ -367,19 +397,19 @@ void main() {
       final board = Board(
         tubes: [
           [0, 0, 0],
-          [1, 1, r],
-          [1, 1],
+          [1, 1, 1, r],
+          [1],
           <int>[],
         ],
         tubeSize: 4,
       );
-      // The rainbow takes the 1s under it: a run of 3.
-      expect(applyCleanMove(board, 1, 2), isNull);
-      final next = applyCleanMove(board, 1, 3)!;
-      // The rainbow lands on the 0s (13), the 1s on the single 1.
+      // [1, 1, 1, R] is complete, but its rainbow can still be tapped out.
+      final next = applyCleanMove(board, 1, 1)!;
+      // The rainbow lands on the 0s (13 beats 11 for the single 1).
       expect(next.tubes[0], [0, 0, 0, r]);
-      expect(next.tubes[2], [1, 1, 1, 1]);
-      expect(next.isWon, isTrue);
+      final done = applyCleanMove(next, 2, 1)!;
+      expect(done.tubes[1], [1, 1, 1, 1]);
+      expect(done.isWon, isTrue);
     });
   });
 
