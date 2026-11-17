@@ -19,7 +19,8 @@ abstract final class AppColors {
 
   // Text.
   static const Color text = Color(0xFFFFFFFF);
-  static const Color textMuted = Color(0x8CFFFFFF);
+  // 60% white: captions stay readable (above 4.5:1) on glass.
+  static const Color textMuted = Color(0x99FFFFFF);
   static const Color textOnAccent = Color(0xFF14121F);
 
   // Accents.
@@ -142,20 +143,23 @@ class RoundIconButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Tooltip(
-      message: tooltip,
-      child: Material(
-        color: AppColors.glassStrong,
-        shape: const CircleBorder(
-          side: BorderSide(color: AppColors.glassBorder),
-        ),
-        child: InkWell(
-          customBorder: const CircleBorder(),
-          onTap: onPressed,
-          child: SizedBox(
-            width: 48,
-            height: 48,
-            child: Icon(icon, color: AppColors.text, size: 24),
+    return Semantics(
+      button: true,
+      child: Tooltip(
+        message: tooltip,
+        child: Material(
+          color: AppColors.glassStrong,
+          shape: const CircleBorder(
+            side: BorderSide(color: AppColors.glassBorder),
+          ),
+          child: InkWell(
+            customBorder: const CircleBorder(),
+            onTap: onPressed,
+            child: SizedBox(
+              width: 48,
+              height: 48,
+              child: Icon(icon, color: AppColors.text, size: 24),
+            ),
           ),
         ),
       ),
@@ -182,10 +186,22 @@ class AccentButton extends StatelessWidget {
         child: InkWell(
           borderRadius: BorderRadius.circular(AppRadii.pill),
           onTap: onPressed,
-          child: SizedBox(
-            height: 56,
-            width: double.infinity,
-            child: Center(child: Text(label, style: AppText.button)),
+          // Grows with large text instead of clipping it.
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(
+              minHeight: 56,
+              minWidth: double.infinity,
+            ),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              child: Center(
+                child: Text(
+                  label,
+                  style: AppText.button,
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            ),
           ),
         ),
       ),
@@ -238,13 +254,19 @@ class GlassButton extends StatelessWidget {
       child: InkWell(
         customBorder: const StadiumBorder(),
         onTap: onPressed,
-        child: SizedBox(
-          height: 56,
-          width: double.infinity,
-          child: Center(
-            child: Text(
-              label,
-              style: AppText.button.copyWith(color: AppColors.text),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(
+            minHeight: 56,
+            minWidth: double.infinity,
+          ),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            child: Center(
+              child: Text(
+                label,
+                style: AppText.button.copyWith(color: AppColors.text),
+                textAlign: TextAlign.center,
+              ),
             ),
           ),
         ),

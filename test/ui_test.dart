@@ -1,8 +1,15 @@
+import 'package:color_flow/game/color_flow_game.dart';
+import 'package:color_flow/game/game_mode.dart';
+import 'package:color_flow/main.dart';
 import 'package:color_flow/progress.dart';
 import 'package:color_flow/settings.dart';
+import 'package:color_flow/ui/confirm_dialog.dart';
+import 'package:color_flow/ui/home_screen.dart';
 import 'package:color_flow/ui/settings_screen.dart';
+import 'package:color_flow/ui/stats_screen.dart';
 import 'package:color_flow/ui/themes_screen.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -45,5 +52,151 @@ void main() {
     // Locked themes show their cost.
     expect(find.text('75'), findsOneWidget);
     expect(find.text('150'), findsOneWidget);
+  });
+
+  group('Leave dialog', () {
+    test('asks only with progress and no result card', () {
+      expect(
+        leaveNeedsConfirm(status: GameStatus.playing, hasProgress: true),
+        isTrue,
+      );
+      expect(
+        leaveNeedsConfirm(status: GameStatus.stuck, hasProgress: true),
+        isTrue,
+      );
+      expect(
+        leaveNeedsConfirm(status: GameStatus.playing, hasProgress: false),
+        isFalse,
+      );
+      expect(
+        leaveNeedsConfirm(status: GameStatus.won, hasProgress: true),
+        isFalse,
+      );
+      expect(
+        leaveNeedsConfirm(status: GameStatus.failed, hasProgress: true),
+        isFalse,
+      );
+    });
+
+    test('level modes keep progress, runs end', () {
+      expect(
+        leaveMessage(GameMode.levels),
+        'Your progress on this level is kept.',
+      );
+      expect(
+        leaveMessage(GameMode.daily),
+        'Your progress on this level is kept.',
+      );
+      expect(leaveMessage(GameMode.rush), 'This run will end.');
+      expect(leaveMessage(GameMode.endless), 'This run will end.');
+      expect(restartTitle(GameMode.levels), 'Restart this level?');
+      expect(restartTitle(GameMode.endless), 'Skip this board?');
+      expect(restartTitle(GameMode.rush), 'Start a new run?');
+    });
+
+    testWidgets('Leave returns true, Stay returns false', (tester) async {
+      final results = <bool>[];
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Builder(
+            builder: (context) => TextButton(
+              onPressed: () async => results.add(
+                await showConfirmDialog(
+                  context,
+                  title: 'Leave this run?',
+                  message: leaveMessage(GameMode.levels),
+                  confirmLabel: 'Leave',
+                  cancelLabel: 'Stay',
+                ),
+              ),
+              child: const Text('open'),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('open'));
+      await tester.pumpAndSettle();
+      expect(find.text('Leave this run?'), findsOneWidget);
+      expect(find.text('Your progress on this level is kept.'), findsOneWidget);
+      await tester.tap(find.text('Stay'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('open'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Leave'));
+      await tester.pumpAndSettle();
+      expect(results, [false, true]);
+      expect(find.text('Leave this run?'), findsNothing);
+    });
+  });
+
+  group('Stats', () {
+    testWidgets('empty state pops with Levels mode', (tester) async {
+      final progress = Progress(await _prefs());
+      GameMode? popped;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Builder(
+            builder: (context) => TextButton(
+              onPressed: () async {
+                popped = await Navigator.of(context).push<GameMode>(
+                  MaterialPageRoute(
+                    builder: (_) => StatsScreen(progress: progress),
+                  ),
+                );
+              },
+              child: const Text('open'),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('open'));
+      await tester.pumpAndSettle();
+      expect(find.text('Play a level to see your stats here.'), findsOneWidget);
+      expect(find.text('Levels solved'), findsNothing);
+      await tester.tap(find.text('Play Levels'));
+      await tester.pumpAndSettle();
+      expect(popped, GameMode.levels);
+    });
+
+    testWidgets('shows stats once something is played', (tester) async {
+      final progress = Progress(await _prefs({'stars_levels_1': 3}));
+      await tester.pumpWidget(
+        MaterialApp(home: StatsScreen(progress: progress)),
+      );
+      expect(find.text('Levels solved'), findsOneWidget);
+      expect(find.text('Play Levels'), findsNothing);
+    });
+  });
+
+  group('Home', () {
+    testWidgets('mode cards are one button with title and status', (
+      tester,
+    ) async {
+      final today = DateTime.now();
+      final prefs = await _prefs({'level': 4});
+      final progress = Progress(prefs);
+      await progress.saveGameState(GameMode.levels, const {'level': 4}, today);
+      final handle = tester.ensureSemantics();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: HomeScreen(progress: progress, settings: Settings(prefs)),
+        ),
+      );
+      expect(
+        find.bySemanticsLabel('Levels, Level 4 · in progress'),
+        findsOneWidget,
+      );
+      expect(find.bySemanticsLabel('Move limit, Level 1'), findsOneWidget);
+      final node = tester.getSemantics(
+        find.bySemanticsLabel('Move limit, Level 1'),
+      );
+      expect(node.flagsCollection.isButton, isTrue);
+      handle.dispose();
+    });
+  });
+
+  test('portrait only on phones', () {
+    expect(orientationsFor(411), [DeviceOrientation.portraitUp]);
+    expect(orientationsFor(800), DeviceOrientation.values);
   });
 }

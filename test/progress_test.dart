@@ -163,4 +163,99 @@ void main() {
       expect(s.blockStyle(150).palette, BlockTheme.mono.palette);
     });
   });
+
+  group('Level saved on win', () {
+    test('a won level saves the next level in level modes', () async {
+      final prefs = await _prefs();
+      final p = Progress(prefs);
+      await p.saveLevelWon(GameMode.levels, 4);
+      expect(p.level(GameMode.levels), 5);
+      expect(prefs.getInt('level'), 5);
+      await p.saveLevelWon(GameMode.timed, 2);
+      expect(p.level(GameMode.timed), 3);
+    });
+
+    test('modes without levels are not touched', () async {
+      final p = Progress(await _prefs());
+      await p.saveLevelWon(GameMode.daily, 20);
+      await p.saveLevelWon(GameMode.endless, 3);
+      expect(p.level(GameMode.daily), 1);
+      expect(p.level(GameMode.endless), 1);
+    });
+  });
+
+  group('Saved game state', () {
+    final today = DateTime(2026, 11, 17);
+    const state = <String, Object?>{
+      'version': 1,
+      'level': 3,
+      'tubes': [
+        [0, 1],
+        [2],
+      ],
+    };
+
+    test(
+      'is saved per mode under saved_<mode> and removed with null',
+      () async {
+        final prefs = await _prefs();
+        final p = Progress(prefs);
+        expect(p.savedState(GameMode.levels, today), isNull);
+        await p.saveGameState(GameMode.levels, state, today);
+        expect(prefs.getString('saved_levels'), isNotNull);
+        expect(p.savedState(GameMode.levels, today), state);
+        expect(p.hasSavedState(GameMode.levels, today), isTrue);
+        expect(p.savedState(GameMode.moves, today), isNull);
+        await p.saveGameState(GameMode.levels, null, today);
+        expect(prefs.containsKey('saved_levels'), isFalse);
+      },
+    );
+
+    test('clear removes it', () async {
+      final p = Progress(await _prefs());
+      await p.saveGameState(GameMode.beltFull, state, today);
+      await p.clearGameState(GameMode.beltFull);
+      expect(p.savedState(GameMode.beltFull, today), isNull);
+    });
+
+    test('daily only returns a game saved for today', () async {
+      final p = Progress(await _prefs());
+      await p.saveGameState(GameMode.daily, state, today);
+      expect(p.savedState(GameMode.daily, today), state);
+      expect(p.savedState(GameMode.daily, DateTime(2026, 11, 18)), isNull);
+      // Level modes keep it across days.
+      await p.saveGameState(GameMode.levels, state, today);
+      expect(p.savedState(GameMode.levels, DateTime(2026, 11, 18)), state);
+    });
+
+    test('broken data counts as no saved game', () async {
+      final p = Progress(
+        await _prefs({'saved_levels': 'not json', 'saved_moves': '[1, 2]'}),
+      );
+      expect(p.savedState(GameMode.levels, today), isNull);
+      expect(p.savedState(GameMode.moves, today), isNull);
+    });
+
+    test('only level modes and daily keep their state', () {
+      expect(Progress.keepsState(GameMode.levels), isTrue);
+      expect(Progress.keepsState(GameMode.beltFull), isTrue);
+      expect(Progress.keepsState(GameMode.daily), isTrue);
+      expect(Progress.keepsState(GameMode.endless), isFalse);
+      expect(Progress.keepsState(GameMode.rush), isFalse);
+    });
+  });
+
+  group('Has played', () {
+    test('is false on a fresh install and true after a solve', () async {
+      final p = Progress(await _prefs());
+      expect(p.hasPlayed, isFalse);
+      await p.recordStars(GameMode.levels, 1, 2);
+      expect(p.hasPlayed, isTrue);
+    });
+
+    test('counts scores and levels past the first', () async {
+      expect(Progress(await _prefs({'rush_best': 3})).hasPlayed, isTrue);
+      expect(Progress(await _prefs({'level_moves': 2})).hasPlayed, isTrue);
+    });
+  });
 }

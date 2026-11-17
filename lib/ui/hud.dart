@@ -6,56 +6,98 @@ import 'app_theme.dart';
 
 /// Top bar: Home left, title, a mode pill (moves, time or score) and the
 /// round Retry (Skip in endless) button right, segmented loop bar below.
-class Hud extends StatelessWidget {
+/// Its rendered height (below the top inset) goes to [onHeight] after
+/// every layout change, so the game can place the board under it.
+class Hud extends StatefulWidget {
   const Hud({
     super.key,
     required this.game,
     required this.onHome,
+    required this.onRestart,
     required this.day,
+    this.onHeight,
   });
 
   final ColorFlowGame game;
   final VoidCallback onHome;
 
+  /// The round Retry / Skip / New run button.
+  final VoidCallback onRestart;
+
   /// The day the game screen opened; names the daily puzzle.
   final DateTime day;
 
+  final ValueChanged<double>? onHeight;
+
+  @override
+  State<Hud> createState() => _HudState();
+}
+
+class _HudState extends State<Hud> {
+  final GlobalKey _contentKey = GlobalKey();
+  double? _reportedHeight;
+
+  /// Measures the HUD after this frame (it may change with the text
+  /// scale or the content) and reports a new height.
+  void _scheduleMeasure() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final box = _contentKey.currentContext?.findRenderObject();
+      if (box is! RenderBox || !box.hasSize) return;
+      final height = box.size.height;
+      if (height == _reportedHeight) return;
+      _reportedHeight = height;
+      widget.onHeight?.call(height);
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
+    final game = widget.game;
     final endless = game.mode == GameMode.endless;
+    // Rebuild (and measure again) when the text scale changes.
+    MediaQuery.textScalerOf(context);
     return SafeArea(
       child: Padding(
+        key: _contentKey,
         padding: const EdgeInsets.fromLTRB(20, 8, 20, 0),
         child: ValueListenableBuilder<HudState>(
           valueListenable: game.hud,
           builder: (context, state, _) {
+            _scheduleMeasure();
             final pill = _pillText(state);
             final secondsLeft = state.secondsLeft;
             final warning = secondsLeft != null && secondsLeft <= 10;
+            final pillWidget = pill == null
+                ? null
+                : (warning ? WarningPill(text: pill) : GlassPill(text: pill));
             return Column(
               crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
               children: [
-                SizedBox(
-                  height: 48,
+                // At least 48 dp; grows with large text.
+                ConstrainedBox(
+                  constraints: const BoxConstraints(minHeight: 48),
                   child: Row(
                     children: [
                       RoundIconButton(
                         icon: Icons.home_rounded,
                         tooltip: 'Home',
-                        onPressed: onHome,
+                        onPressed: widget.onHome,
                       ),
                       const SizedBox(width: 12),
                       Expanded(
                         child: _Title(
                           mode: game.mode,
                           level: state.level,
-                          day: day,
+                          day: widget.day,
                         ),
                       ),
-                      if (pill != null) ...[
-                        warning
-                            ? WarningPill(text: pill)
-                            : GlassPill(text: pill),
+                      if (pillWidget != null) ...[
+                        // The clock is read out as it changes.
+                        secondsLeft != null
+                            ? Semantics(liveRegion: true, child: pillWidget)
+                            : pillWidget,
                         const SizedBox(width: 10),
                       ],
                       RoundIconButton(
@@ -67,7 +109,7 @@ class Hud extends StatelessWidget {
                             : (game.mode == GameMode.rush
                                   ? 'New run'
                                   : 'Retry level'),
-                        onPressed: game.restartPressed,
+                        onPressed: widget.onRestart,
                       ),
                     ],
                   ),
@@ -178,28 +220,32 @@ class _LoopBarState extends State<LoopBar> with SingleTickerProviderStateMixin {
         // 0 -> 1 -> 0 over the animation.
         final t = _flash.isAnimating ? 1 - (2 * _flash.value - 1).abs() : 0.0;
         final flashColor = Color.lerp(Colors.transparent, AppColors.danger, t)!;
-        return Row(
-          children: [
-            for (var i = 0; i < widget.capacity; i++) ...[
-              if (i > 0) const SizedBox(width: 6),
-              Expanded(
-                child: Container(
-                  height: 6,
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(3),
-                    color: i < widget.filled ? null : AppColors.glassStrong,
-                    gradient: i < widget.filled
-                        ? AppColors.accentGradient
-                        : null,
-                  ),
-                  foregroundDecoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(3),
-                    color: flashColor,
+        return Semantics(
+          label: 'Loop ${widget.filled} of ${widget.capacity}',
+          excludeSemantics: true,
+          child: Row(
+            children: [
+              for (var i = 0; i < widget.capacity; i++) ...[
+                if (i > 0) const SizedBox(width: 6),
+                Expanded(
+                  child: Container(
+                    height: 6,
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(3),
+                      color: i < widget.filled ? null : AppColors.glassStrong,
+                      gradient: i < widget.filled
+                          ? AppColors.accentGradient
+                          : null,
+                    ),
+                    foregroundDecoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(3),
+                      color: flashColor,
+                    ),
                   ),
                 ),
-              ),
+              ],
             ],
-          ],
+          ),
         );
       },
     );

@@ -6,7 +6,8 @@ import 'app_theme.dart';
 import 'glass_page.dart';
 
 /// Win view in the same dark glass style as the game: blurred board
-/// behind, glass card with a pill, title, message and one accent button.
+/// behind, centered glass card with a pill, title and message, and the
+/// buttons at the bottom of the screen.
 class LevelCompleteScreen extends StatefulWidget {
   const LevelCompleteScreen({
     super.key,
@@ -60,51 +61,43 @@ class _LevelCompleteScreenState extends State<LevelCompleteScreen>
         child: ColoredBox(
           color: AppColors.bgDeep.withValues(alpha: 0.6),
           child: SafeArea(
-            child: Padding(
-              padding: const EdgeInsets.all(20),
-              child: Center(
-                child: SlideTransition(
-                  position: Tween(
-                    begin: const Offset(0, 0.08),
-                    end: Offset.zero,
-                  ).animate(curve),
-                  child: GlassCard(
-                    padding: const EdgeInsets.fromLTRB(24, 28, 24, 24),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        GlassPill(text: widget.pill),
-                        if (widget.stars != null) ...[
-                          const SizedBox(height: 16),
-                          StarRow(filled: widget.stars!),
-                        ],
-                        const SizedBox(height: 20),
-                        Text(
-                          widget.title,
-                          style: AppText.display,
-                          textAlign: TextAlign.center,
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          widget.message,
-                          style: AppText.body,
-                          textAlign: TextAlign.center,
-                        ),
-                        const SizedBox(height: 28),
-                        AccentButton(
-                          label: widget.buttonLabel,
-                          onPressed: widget.onPressed,
-                        ),
-                        if (widget.secondaryLabel != null &&
-                            widget.onSecondary != null) ...[
-                          const SizedBox(height: 10),
-                          GlassButton(
-                            label: widget.secondaryLabel!,
-                            onPressed: widget.onSecondary!,
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: maxPageWidth),
+                child: Padding(
+                  padding: const EdgeInsets.all(20),
+                  child: Column(
+                    children: [
+                      // The card stays centered; it scrolls with very
+                      // large text.
+                      Expanded(
+                        child: Center(
+                          child: SingleChildScrollView(
+                            child: SlideTransition(
+                              position: Tween(
+                                begin: const Offset(0, 0.08),
+                                end: Offset.zero,
+                              ).animate(curve),
+                              child: _card(),
+                            ),
                           ),
-                        ],
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      // Buttons at the bottom, in the thumb zone.
+                      AccentButton(
+                        label: widget.buttonLabel,
+                        onPressed: widget.onPressed,
+                      ),
+                      if (widget.secondaryLabel != null &&
+                          widget.onSecondary != null) ...[
+                        const SizedBox(height: 10),
+                        GlassButton(
+                          label: widget.secondaryLabel!,
+                          onPressed: widget.onSecondary!,
+                        ),
                       ],
-                    ),
+                    ],
                   ),
                 ),
               ),
@@ -114,4 +107,33 @@ class _LevelCompleteScreenState extends State<LevelCompleteScreen>
       ),
     );
   }
+
+  Widget _card() => GlassCard(
+    padding: const EdgeInsets.fromLTRB(24, 28, 24, 28),
+    child: SizedBox(
+      width: double.infinity,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          GlassPill(text: widget.pill),
+          if (widget.stars != null) ...[
+            const SizedBox(height: 16),
+            StarRow(filled: widget.stars!),
+          ],
+          const SizedBox(height: 20),
+          Text(
+            widget.title,
+            style: AppText.display,
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 8),
+          Text(
+            widget.message,
+            style: AppText.body,
+            textAlign: TextAlign.center,
+          ),
+        ],
+      ),
+    ),
+  );
 }

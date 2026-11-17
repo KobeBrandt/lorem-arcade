@@ -48,27 +48,42 @@ class _HomeScreenState extends State<HomeScreen> {
     ),
   );
 
-  Future<void> _push(WidgetBuilder builder) async {
-    await Navigator.of(context).push(MaterialPageRoute<void>(builder: builder));
+  Future<T?> _push<T>(WidgetBuilder builder) async {
+    final result = await Navigator.of(context)
+        .push(MaterialPageRoute<T>(builder: builder));
     // Progress or settings may have changed on the other screen.
     if (mounted) setState(() {});
+    return result;
+  }
+
+  Future<void> _openStats() async {
+    final mode = await _push<GameMode>(
+      (_) => StatsScreen(progress: widget.progress),
+    );
+    // The empty stats page asks to play a mode.
+    if (mode != null && mounted) await _open(mode);
   }
 
   String _status(GameMode mode, DateTime today) {
     final p = widget.progress;
+    final inProgress =
+        Progress.keepsState(mode) && p.hasSavedState(mode, today);
     switch (mode) {
       case GameMode.daily:
         final streak = p.dailyStreak(today);
         final days = streak == 1 ? '1 day' : '$streak days';
-        return p.dailySolved(today)
-            ? 'Solved · streak $days'
-            : '${weekdayNames[today.weekday - 1]} · streak $days';
+        if (p.dailySolved(today)) return 'Solved · streak $days';
+        final weekday = weekdayNames[today.weekday - 1];
+        return inProgress
+            ? '$weekday · in progress'
+            : '$weekday · streak $days';
       case GameMode.endless:
         return 'Best ${p.endlessBest}';
       case GameMode.rush:
         return 'Best ${p.rushBest}';
       default:
-        return 'Level ${p.level(mode)}';
+        final level = 'Level ${p.level(mode)}';
+        return inProgress ? '$level · in progress' : level;
     }
   }
 
@@ -81,70 +96,71 @@ class _HomeScreenState extends State<HomeScreen> {
         children: [
           const GlowBackground(),
           SafeArea(
-            child: ListView(
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  children: [
-                    RoundIconButton(
-                      icon: Icons.bar_chart_rounded,
-                      tooltip: 'Stats',
-                      onPressed: () =>
-                          _push((_) => StatsScreen(progress: widget.progress)),
-                    ),
-                    const SizedBox(width: 8),
-                    RoundIconButton(
-                      icon: Icons.palette_outlined,
-                      tooltip: 'Themes',
-                      onPressed: () => _push(
-                        (_) => ThemesScreen(
-                          progress: widget.progress,
-                          settings: widget.settings,
+            child: LayoutBuilder(
+              builder: (context, constraints) => ListView(
+                padding: pagePadding(constraints.maxWidth),
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      RoundIconButton(
+                        icon: Icons.bar_chart_rounded,
+                        tooltip: 'Stats',
+                        onPressed: _openStats,
+                      ),
+                      const SizedBox(width: 8),
+                      RoundIconButton(
+                        icon: Icons.palette_outlined,
+                        tooltip: 'Themes',
+                        onPressed: () => _push(
+                          (_) => ThemesScreen(
+                            progress: widget.progress,
+                            settings: widget.settings,
+                          ),
                         ),
                       ),
-                    ),
-                    const SizedBox(width: 8),
-                    RoundIconButton(
-                      icon: Icons.settings_outlined,
-                      tooltip: 'Settings',
-                      onPressed: () => _push(
-                        (_) => SettingsScreen(settings: widget.settings),
+                      const SizedBox(width: 8),
+                      RoundIconButton(
+                        icon: Icons.settings_outlined,
+                        tooltip: 'Settings',
+                        onPressed: () => _push(
+                          (_) => SettingsScreen(settings: widget.settings),
+                        ),
                       ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 8),
-                  child: Row(
-                    children: [
-                      const Flexible(
-                        child: Text('Color Flow', style: AppText.display),
-                      ),
-                      const SizedBox(width: 12),
-                      StarCountPill(stars: widget.progress.totalStars),
                     ],
                   ),
-                ),
-                const Padding(
-                  padding: EdgeInsets.fromLTRB(8, 4, 8, 24),
-                  child: Text('Pick a mode.', style: AppText.body),
-                ),
-                for (final mode in GameMode.values) ...[
-                  _ModeCard(
-                    icon: _icons[mode]!,
-                    title: mode.title,
-                    description: mode.description,
-                    status: _status(mode, today),
-                    enabled:
-                        mode != GameMode.daily ||
-                        !widget.progress.dailySolved(today),
-                    onTap: () => _open(mode),
+                  const SizedBox(height: 8),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    child: Row(
+                      children: [
+                        const Flexible(
+                          child: Text('Color Flow', style: AppText.display),
+                        ),
+                        const SizedBox(width: 12),
+                        StarCountPill(stars: widget.progress.totalStars),
+                      ],
+                    ),
                   ),
-                  const SizedBox(height: 12),
+                  const Padding(
+                    padding: EdgeInsets.fromLTRB(8, 4, 8, 24),
+                    child: Text('Pick a mode.', style: AppText.body),
+                  ),
+                  for (final mode in GameMode.values) ...[
+                    _ModeCard(
+                      icon: _icons[mode]!,
+                      title: mode.title,
+                      description: mode.description,
+                      status: _status(mode, today),
+                      enabled:
+                          mode != GameMode.daily ||
+                          !widget.progress.dailySolved(today),
+                      onTap: () => _open(mode),
+                    ),
+                    const SizedBox(height: 12),
+                  ],
                 ],
-              ],
+              ),
             ),
           ),
         ],
@@ -172,53 +188,64 @@ class _ModeCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Opacity(
-      opacity: enabled ? 1 : 0.5,
-      child: Stack(
-        children: [
-          GlassCard(
-            padding: const EdgeInsets.all(16),
-            child: Row(
-              children: [
-                Container(
-                  width: 48,
-                  height: 48,
-                  decoration: const BoxDecoration(
-                    shape: BoxShape.circle,
-                    gradient: AppColors.accentGradient,
+    // One node for screen readers: title and status, tap to open.
+    return Semantics(
+      button: true,
+      enabled: enabled,
+      label: '$title, $status',
+      onTap: enabled ? onTap : null,
+      excludeSemantics: true,
+      child: Opacity(
+        opacity: enabled ? 1 : 0.5,
+        child: Stack(
+          children: [
+            GlassCard(
+              padding: const EdgeInsets.all(16),
+              child: Row(
+                children: [
+                  Container(
+                    width: 48,
+                    height: 48,
+                    decoration: const BoxDecoration(
+                      shape: BoxShape.circle,
+                      gradient: AppColors.accentGradient,
+                    ),
+                    child: Icon(icon, color: AppColors.textOnAccent),
                   ),
-                  child: Icon(icon, color: AppColors.textOnAccent),
-                ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(title, style: AppText.title.copyWith(fontSize: 18)),
-                      const SizedBox(height: 2),
-                      Text(description, style: AppText.caption),
-                      const SizedBox(height: 8),
-                      GlassPill(text: status),
-                    ],
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          title,
+                          style: AppText.title.copyWith(fontSize: 18),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(description, style: AppText.caption),
+                        const SizedBox(height: 8),
+                        GlassPill(text: status),
+                      ],
+                    ),
                   ),
-                ),
-                const Icon(
-                  Icons.chevron_right_rounded,
-                  color: AppColors.textMuted,
-                ),
-              ],
-            ),
-          ),
-          Positioned.fill(
-            child: Material(
-              color: Colors.transparent,
-              child: InkWell(
-                borderRadius: BorderRadius.circular(AppRadii.card),
-                onTap: enabled ? onTap : null,
+                  const Icon(
+                    Icons.chevron_right_rounded,
+                    color: AppColors.textMuted,
+                  ),
+                ],
               ),
             ),
-          ),
-        ],
+            Positioned.fill(
+              child: Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(AppRadii.card),
+                  onTap: enabled ? onTap : null,
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

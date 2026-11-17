@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:math';
 
 import 'package:shared_preferences/shared_preferences.dart';
@@ -40,10 +41,23 @@ class Progress {
 
   static String _tutorialKey(GameMode mode) => 'tutorial_seen_${mode.name}';
 
+  static String _savedStateKey(GameMode mode) => 'saved_${mode.name}';
+
+  /// Modes whose unfinished level is kept when the player leaves: the
+  /// level modes and the daily puzzle. Endless and rush runs end.
+  static bool keepsState(GameMode mode) =>
+      mode.hasLevels || mode == GameMode.daily;
+
   int level(GameMode mode) => _prefs.getInt(_levelKey(mode)) ?? 1;
 
   Future<void> setLevel(GameMode mode, int level) =>
       _prefs.setInt(_levelKey(mode), level);
+
+  /// Saves the next level right after [level] is won, so leaving on the
+  /// win card does not play the same level again. Only for level modes.
+  Future<void> saveLevelWon(GameMode mode, int level) async {
+    if (mode.hasLevels) await setLevel(mode, level + 1);
+  }
 
   int get endlessBest => _prefs.getInt(_endlessBestKey) ?? 0;
 
@@ -145,6 +159,57 @@ class Progress {
 
   Future<void> markTutorialSeen(GameMode mode) =>
       _prefs.setBool(_tutorialKey(mode), true);
+
+  /// Saves the unfinished game of [mode] (from `ColorFlowGame.saveState`)
+  /// for [day]. A null [state] removes the saved game.
+  Future<void> saveGameState(
+    GameMode mode,
+    Map<String, Object?>? state,
+    DateTime day,
+  ) {
+    final key = _savedStateKey(mode);
+    if (state == null) return _prefs.remove(key);
+    return _prefs.setString(
+      key,
+      jsonEncode({'day': dayKey(day), 'state': state}),
+    );
+  }
+
+  Future<void> clearGameState(GameMode mode) =>
+      _prefs.remove(_savedStateKey(mode));
+
+  /// The saved unfinished game of [mode], or null. The daily puzzle only
+  /// returns a game saved for [today]. Broken data counts as none.
+  Map<String, Object?>? savedState(GameMode mode, DateTime today) {
+    final raw = _prefs.getString(_savedStateKey(mode));
+    if (raw == null) return null;
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map<String, Object?>) return null;
+      final state = decoded['state'];
+      if (state is! Map<String, Object?>) return null;
+      if (mode == GameMode.daily && decoded['day'] != dayKey(today)) {
+        return null;
+      }
+      return state;
+    } on FormatException {
+      return null;
+    }
+  }
+
+  bool hasSavedState(GameMode mode, DateTime today) =>
+      savedState(mode, today) != null;
+
+  /// Whether anything has been played: a solve, a score, a best time or
+  /// a level past the first.
+  bool get hasPlayed =>
+      levelsSolved > 0 ||
+      endlessBest > 0 ||
+      endlessPoints > 0 ||
+      rushBest > 0 ||
+      _daily != null ||
+      GameMode.values.any((mode) => bestTime(mode) != null) ||
+      GameMode.values.any((mode) => mode.hasLevels && level(mode) > 1);
 
   static DateTime _yesterday(DateTime day) =>
       DateTime(day.year, day.month, day.day - 1);

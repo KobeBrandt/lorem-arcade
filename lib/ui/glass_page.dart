@@ -2,6 +2,17 @@ import 'package:flutter/material.dart';
 
 import 'app_theme.dart';
 
+/// Widest a page column gets, so wide (landscape tablet) screens keep a
+/// readable centered column.
+const double maxPageWidth = 560;
+
+/// List padding that keeps the content at most [maxPageWidth] wide and
+/// centered in [width].
+EdgeInsets pagePadding(double width) {
+  final side = width > maxPageWidth + 32 ? (width - maxPageWidth) / 2 : 16.0;
+  return EdgeInsets.fromLTRB(side, 16, side, 24);
+}
+
 /// Full screen page in the dark glass style: back button, title and a
 /// scrolling list of [children].
 class GlassPage extends StatelessWidget {
@@ -18,29 +29,31 @@ class GlassPage extends StatelessWidget {
         children: [
           const GlowBackground(),
           SafeArea(
-            child: ListView(
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-              children: [
-                Row(
-                  children: [
-                    RoundIconButton(
-                      icon: Icons.arrow_back_rounded,
-                      tooltip: 'Back',
-                      onPressed: () => Navigator.of(context).pop(),
-                    ),
-                    const SizedBox(width: 16),
-                    Expanded(
-                      child: Text(
-                        title,
-                        style: AppText.display,
-                        overflow: TextOverflow.ellipsis,
+            child: LayoutBuilder(
+              builder: (context, constraints) => ListView(
+                padding: pagePadding(constraints.maxWidth),
+                children: [
+                  Row(
+                    children: [
+                      RoundIconButton(
+                        icon: Icons.arrow_back_rounded,
+                        tooltip: 'Back',
+                        onPressed: () => Navigator.of(context).pop(),
                       ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 24),
-                ...children,
-              ],
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: Text(
+                          title,
+                          style: AppText.display,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 24),
+                  ...children,
+                ],
+              ),
             ),
           ),
         ],

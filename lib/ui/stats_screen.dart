@@ -5,7 +5,9 @@ import '../progress.dart';
 import 'app_theme.dart';
 import 'glass_page.dart';
 
-/// Totals, plus level reached and fastest win per mode.
+/// Totals, plus level reached and fastest win per mode. Before anything
+/// is played it shows a hint and a Play Levels button, which pops this
+/// screen with [GameMode.levels] so home opens that mode.
 class StatsScreen extends StatelessWidget {
   const StatsScreen({super.key, required this.progress});
 
@@ -21,6 +23,31 @@ class StatsScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final p = progress;
+    if (!p.hasPlayed) {
+      return GlassPage(
+        title: 'Stats',
+        children: [
+          GlassCard(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              children: [
+                const Text(
+                  'Play a level to see your stats here.',
+                  style: AppText.body,
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 20),
+                AccentButton(
+                  label: 'Play Levels',
+                  onPressed: () =>
+                      Navigator.of(context).pop<GameMode>(GameMode.levels),
+                ),
+              ],
+            ),
+          ),
+        ],
+      );
+    }
     return GlassPage(
       title: 'Stats',
       children: [
