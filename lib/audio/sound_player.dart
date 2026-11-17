@@ -37,9 +37,31 @@ class SoundPlayer implements GameSounds {
 
   static String _completeFile(int level) => 'complete_$level.wav';
 
+  /// Audio context for every player: game sounds mix with other audio
+  /// (such as the user's music) and never take audio focus from it.
+  ///
+  /// FlameAudio.createPool and FlameAudio.play set their own default
+  /// context on each player they make, so this context is passed to every
+  /// such call as well as set as the global context.
+  static AudioContext gameAudioContext() =>
+      AudioContextConfig(focus: AudioContextConfigFocus.mixWithOthers)
+          .build()
+          .copy(
+            android: const AudioContextAndroid(
+              usageType: AndroidUsageType.game,
+              contentType: AndroidContentType.sonification,
+              audioFocus: AndroidAudioFocus.none,
+            ),
+          );
+
   /// Preloads every sound. Never throws; a sound that fails to load is
   /// simply silent.
   static Future<SoundPlayer> load() async {
+    try {
+      await AudioPlayer.global.setAudioContext(gameAudioContext());
+    } catch (error) {
+      debugPrint('SoundPlayer: audio context failed: $error');
+    }
     try {
       await FlameAudio.audioCache.loadAll([
         _tapFile,
@@ -66,7 +88,11 @@ class SoundPlayer implements GameSounds {
     required int maxPlayers,
   }) async {
     try {
-      return await FlameAudio.createPool(file, maxPlayers: maxPlayers);
+      return await FlameAudio.createPool(
+        file,
+        maxPlayers: maxPlayers,
+        audioContext: gameAudioContext(),
+      );
     } catch (error) {
       debugPrint('SoundPlayer: pool for $file failed: $error');
       return null;
@@ -121,7 +147,7 @@ class SoundPlayer implements GameSounds {
   }
 
   void _play(String file) {
-    _guard(() => FlameAudio.play(file));
+    _guard(() => FlameAudio.play(file, audioContext: gameAudioContext()));
   }
 
   /// Runs [action] and swallows both sync and async errors.

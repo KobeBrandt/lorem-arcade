@@ -1,6 +1,8 @@
 import 'dart:typed_data';
 
+import 'package:color_flow/audio/sound_player.dart';
 import 'package:color_flow/audio/wav_synth.dart';
+import 'package:flame_audio/flame_audio.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 String _ascii(ByteData data, int offset) =>
@@ -71,6 +73,13 @@ void main() {
       });
     });
   }
+
+  test('game audio context mixes with other audio and takes no focus', () {
+    final android = SoundPlayer.gameAudioContext().android;
+    expect(android.audioFocus, AndroidAudioFocus.none);
+    expect(android.usageType, AndroidUsageType.game);
+    expect(android.contentType, AndroidContentType.sonification);
+  });
 
   test('combo chords rise in pitch and clamp above 5', () {
     for (var level = 2; level <= completeLevels; level++) {
