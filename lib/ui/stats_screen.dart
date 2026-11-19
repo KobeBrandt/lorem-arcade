@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../arcade/arcade_catalog.dart';
 import '../game/game_mode.dart';
 import '../progress.dart';
 import 'app_theme.dart';
@@ -65,6 +66,10 @@ class StatsScreen extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 12),
+        const Padding(
+          padding: EdgeInsets.fromLTRB(8, 8, 8, 8),
+          child: Text('Color Flow', style: AppText.title),
+        ),
         for (final mode in GameMode.values) ...[
           GlassCard(
             padding: const EdgeInsets.all(20),
@@ -74,6 +79,21 @@ class StatsScreen extends StatelessWidget {
                 Text(mode.title, style: AppText.title.copyWith(fontSize: 18)),
                 const SizedBox(height: 8),
                 ..._rows(mode),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+        ],
+        for (final game in ArcadeGame.values) ...[
+          GlassCard(
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(game.title, style: AppText.title.copyWith(fontSize: 18)),
+                const SizedBox(height: 8),
+                _Row('Level reached', '${p.gameLevel(game.id)}'),
+                _Row('Stars', '${p.gameStars(game.id)}'),
               ],
             ),
           ),
