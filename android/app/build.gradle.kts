@@ -18,7 +18,7 @@ plugins {
 }
 
 android {
-    namespace = "kbrandt.dev.color_flow"
+    namespace = "kbrandt.dev.pocket_puzzles"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
@@ -28,7 +28,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "kbrandt.dev.color_flow"
+        applicationId = "kbrandt.dev.pocket_puzzles"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion

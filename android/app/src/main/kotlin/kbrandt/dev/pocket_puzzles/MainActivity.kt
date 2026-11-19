@@ -1,4 +1,4 @@
-package kbrandt.dev.color_flow
+package kbrandt.dev.pocket_puzzles
 
 import io.flutter.embedding.android.FlutterActivity
 
