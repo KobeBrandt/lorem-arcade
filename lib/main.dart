@@ -9,7 +9,7 @@ import 'game/game_feedback.dart';
 import 'progress.dart';
 import 'settings.dart';
 import 'ui/app_theme.dart';
-import 'ui/home_screen.dart';
+import 'ui/hub_screen.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -73,7 +73,7 @@ class ColorFlowApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       theme: ThemeData.dark(useMaterial3: true)
           .copyWith(scaffoldBackgroundColor: AppColors.bgDeep),
-      home: HomeScreen(progress: progress, settings: settings, sounds: sounds),
+      home: HubScreen(progress: progress, settings: settings, sounds: sounds),
     );
   }
 }

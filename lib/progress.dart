@@ -200,6 +200,34 @@ class Progress {
   bool hasSavedState(GameMode mode, DateTime today) =>
       savedState(mode, today) != null;
 
+  // Hub games (Bead Belt, Cog Clash, Gate Drop), by game id. Their stars
+  // use the same 'stars_' prefix, so they count in [totalStars] and unlock
+  // themes for every game.
+
+  /// Level reached in the hub game [id] (1 when never played).
+  int gameLevel(String id) => _prefs.getInt('level_$id') ?? 1;
+
+  Future<void> setGameLevel(String id, int level) =>
+      _prefs.setInt('level_$id', level);
+
+  /// Best stars (0 when never won) for [level] of the hub game [id].
+  int gameLevelStars(String id, int level) =>
+      _prefs.getInt('$_starsPrefix${id}_$level') ?? 0;
+
+  /// Keeps the best of the saved and the new stars (1 to 3).
+  Future<void> recordGameStars(String id, int level, int stars) async {
+    final value = stars.clamp(1, 3);
+    if (value > gameLevelStars(id, level)) {
+      await _prefs.setInt('$_starsPrefix${id}_$level', value);
+    }
+  }
+
+  /// All stars earned in the hub game [id].
+  int gameStars(String id) => _prefs
+      .getKeys()
+      .where((key) => key.startsWith('$_starsPrefix${id}_'))
+      .fold(0, (sum, key) => sum + (_prefs.getInt(key) ?? 0));
+
   /// Whether anything has been played: a solve, a score, a best time or
   /// a level past the first.
   bool get hasPlayed =>
