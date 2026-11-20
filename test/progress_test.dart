@@ -1,7 +1,7 @@
-import 'package:color_flow/game/game_mode.dart';
-import 'package:color_flow/progress.dart';
-import 'package:color_flow/settings.dart';
-import 'package:color_flow/ui/app_theme.dart';
+import 'package:lorem_arcade/game/game_mode.dart';
+import 'package:lorem_arcade/progress.dart';
+import 'package:lorem_arcade/settings.dart';
+import 'package:lorem_arcade/ui/app_theme.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 

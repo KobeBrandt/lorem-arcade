@@ -3,12 +3,12 @@ import 'dart:convert';
 import 'dart:math';
 import 'dart:ui' show Canvas, PictureRecorder;
 
-import 'package:color_flow/game/board.dart';
-import 'package:color_flow/game/color_flow_game.dart';
-import 'package:color_flow/game/game_feedback.dart';
-import 'package:color_flow/game/game_mode.dart';
-import 'package:color_flow/game/level_config.dart';
-import 'package:color_flow/game/level_generator.dart';
+import 'package:lorem_arcade/game/board.dart';
+import 'package:lorem_arcade/game/color_flow_game.dart';
+import 'package:lorem_arcade/game/game_feedback.dart';
+import 'package:lorem_arcade/game/game_mode.dart';
+import 'package:lorem_arcade/game/level_config.dart';
+import 'package:lorem_arcade/game/level_generator.dart';
 import 'package:flame/events.dart' show TapDownEvent;
 import 'package:flame/game.dart';
 import 'package:flame_test/flame_test.dart';

@@ -1,9 +1,9 @@
-import 'package:color_flow/arcade/arcade_catalog.dart';
-import 'package:color_flow/arcade/arcade_level_game.dart';
-import 'package:color_flow/arcade/arcade_level_screen.dart';
-import 'package:color_flow/progress.dart';
-import 'package:color_flow/settings.dart';
-import 'package:color_flow/ui/hub_screen.dart';
+import 'package:lorem_arcade/arcade/arcade_catalog.dart';
+import 'package:lorem_arcade/arcade/arcade_level_game.dart';
+import 'package:lorem_arcade/arcade/arcade_level_screen.dart';
+import 'package:lorem_arcade/progress.dart';
+import 'package:lorem_arcade/settings.dart';
+import 'package:lorem_arcade/ui/hub_screen.dart';
 import 'package:flame/game.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';

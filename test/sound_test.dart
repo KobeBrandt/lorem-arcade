@@ -1,7 +1,7 @@
 import 'dart:typed_data';
 
-import 'package:color_flow/audio/sound_player.dart';
-import 'package:color_flow/audio/wav_synth.dart';
+import 'package:lorem_arcade/audio/sound_player.dart';
+import 'package:lorem_arcade/audio/wav_synth.dart';
 import 'package:flame_audio/flame_audio.dart';
 import 'package:flutter_test/flutter_test.dart';
 

@@ -1,11 +1,11 @@
 import 'dart:ui' show Canvas, PictureRecorder;
 
-import 'package:color_flow/arcade/arcade_level_game.dart';
-import 'package:color_flow/game/game_feedback.dart';
-import 'package:color_flow/games/cog_clash/cog_battle.dart';
-import 'package:color_flow/games/cog_clash/cog_clash_game.dart';
-import 'package:color_flow/games/cog_clash/cog_model.dart';
-import 'package:color_flow/ui/app_theme.dart';
+import 'package:lorem_arcade/arcade/arcade_level_game.dart';
+import 'package:lorem_arcade/game/game_feedback.dart';
+import 'package:lorem_arcade/games/cog_clash/cog_battle.dart';
+import 'package:lorem_arcade/games/cog_clash/cog_clash_game.dart';
+import 'package:lorem_arcade/games/cog_clash/cog_model.dart';
+import 'package:lorem_arcade/ui/app_theme.dart';
 import 'package:flame/events.dart' show TapDownEvent;
 import 'package:flame/game.dart';
 import 'package:flame_test/flame_test.dart';

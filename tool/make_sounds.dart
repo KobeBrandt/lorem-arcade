@@ -3,7 +3,7 @@
 // Run from the project root: dart run tool/make_sounds.dart
 import 'dart:io';
 
-import 'package:color_flow/audio/wav_synth.dart';
+import 'package:lorem_arcade/audio/wav_synth.dart';
 
 void main() {
   final directory = Directory('assets/audio');

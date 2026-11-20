@@ -1,12 +1,12 @@
 import 'dart:ui' show Canvas, PictureRecorder;
 
-import 'package:color_flow/arcade/arcade_level_game.dart';
-import 'package:color_flow/game/game_feedback.dart';
-import 'package:color_flow/games/gate_drop/gate_drop_game.dart';
-import 'package:color_flow/games/gate_drop/gate_drop_layout.dart';
-import 'package:color_flow/games/gate_drop/gate_drop_levels.dart';
-import 'package:color_flow/games/gate_drop/gate_drop_shaft.dart';
-import 'package:color_flow/ui/app_theme.dart';
+import 'package:lorem_arcade/arcade/arcade_level_game.dart';
+import 'package:lorem_arcade/game/game_feedback.dart';
+import 'package:lorem_arcade/games/gate_drop/gate_drop_game.dart';
+import 'package:lorem_arcade/games/gate_drop/gate_drop_layout.dart';
+import 'package:lorem_arcade/games/gate_drop/gate_drop_levels.dart';
+import 'package:lorem_arcade/games/gate_drop/gate_drop_shaft.dart';
+import 'package:lorem_arcade/ui/app_theme.dart';
 import 'package:flame/game.dart';
 import 'package:flame_test/flame_test.dart';
 import 'package:flutter_test/flutter_test.dart';
