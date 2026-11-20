@@ -42,8 +42,55 @@ class SettingsScreen extends StatelessWidget {
               ],
             ),
           ),
+          const SizedBox(height: 24),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            child: Semantics(
+              header: true,
+              child: const Text('Hidden games', style: AppText.title),
+            ),
+          ),
+          const SizedBox(height: 12),
+          GlassCard(
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            child: _hiddenGames(),
+          ),
         ],
       ),
+    );
+  }
+
+  Widget _hiddenGames() {
+    final hidden = settings.hiddenGames;
+    if (hidden.isEmpty) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+        child: Text(
+          'No hidden games. Long-press a game in the hub to hide it.',
+          style: AppText.caption,
+        ),
+      );
+    }
+    return Column(
+      children: [
+        for (final game in hidden)
+          ListTile(
+            leading: Icon(game.icon, color: AppColors.text),
+            title: Text(
+              game.title,
+              style: AppText.title.copyWith(fontSize: 18),
+            ),
+            trailing: TextButton(
+              onPressed: () => settings.setHidden(game, false),
+              style: TextButton.styleFrom(
+                foregroundColor: AppColors.accentMint,
+                minimumSize: const Size(64, 48),
+              ),
+              child: Text('Show', semanticsLabel: 'Show ${game.title}'),
+            ),
+            contentPadding: const EdgeInsets.symmetric(horizontal: 20),
+          ),
+      ],
     );
   }
 }

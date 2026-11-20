@@ -3,6 +3,7 @@ import 'package:flutter/painting.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'game/game_feedback.dart';
+import 'hub/hub_game.dart';
 import 'ui/app_theme.dart';
 
 /// Block color themes, unlocked with stars.
@@ -109,5 +110,98 @@ class Settings extends ChangeNotifier {
     return selected.unlockedWith(stars)
         ? selected.style
         : BlockTheme.standard.style;
+  }
+
+  // Hub layout: hidden games, custom order, view and sort.
+
+  static const String _hiddenKey = 'hub_hidden';
+  static const String _orderKey = 'hub_order';
+  static const String _viewKey = 'hub_view';
+  static const String _sortKey = 'hub_sort';
+
+  /// Games the player hid from the hub, in hub order.
+  List<HubGame> get hiddenGames {
+    final hidden = (_prefs.getStringList(_hiddenKey) ?? const []).toSet();
+    return [
+      for (final game in gameOrder)
+        if (hidden.contains(game.id)) game,
+    ];
+  }
+
+  bool isHidden(HubGame game) =>
+      (_prefs.getStringList(_hiddenKey) ?? const []).contains(game.id);
+
+  Future<void> setHidden(HubGame game, bool hidden) async {
+    final ids = {...?_prefs.getStringList(_hiddenKey)};
+    final changed = hidden ? ids.add(game.id) : ids.remove(game.id);
+    if (!changed) return;
+    await _prefs.setStringList(_hiddenKey, ids.toList());
+    notifyListeners();
+  }
+
+  /// Every game in the player's own order. Unknown saved names are
+  /// skipped and games missing from the saved order follow in enum order.
+  List<HubGame> get gameOrder {
+    final order = <HubGame>[];
+    for (final id in _prefs.getStringList(_orderKey) ?? const <String>[]) {
+      final game = HubGame.byId(id);
+      if (game != null && !order.contains(game)) order.add(game);
+    }
+    for (final game in HubGame.values) {
+      if (!order.contains(game)) order.add(game);
+    }
+    return order;
+  }
+
+  Future<void> setGameOrder(List<HubGame> order) async {
+    await _prefs.setStringList(_orderKey, [for (final g in order) g.id]);
+    notifyListeners();
+  }
+
+  /// Puts [shown] (the games the hub shows, in their new order) in the
+  /// custom order. Games not in [shown] keep their places.
+  Future<void> reorderShown(List<HubGame> shown) {
+    final queue = [...shown];
+    final order = [
+      for (final game in gameOrder)
+        shown.contains(game) ? queue.removeAt(0) : game,
+    ];
+    return setGameOrder(order);
+  }
+
+  /// Swaps [game] with its neighbour in [shown]: one place up when [up],
+  /// else one place down. Does nothing at the edge.
+  Future<void> moveShown(
+    List<HubGame> shown,
+    HubGame game, {
+    required bool up,
+  }) {
+    final from = shown.indexOf(game);
+    final to = up ? from - 1 : from + 1;
+    if (from < 0 || to < 0 || to >= shown.length) return Future.value();
+    final next = [...shown];
+    next[from] = next[to];
+    next[to] = game;
+    return reorderShown(next);
+  }
+
+  HubView get hubView => HubView.values.firstWhere(
+    (v) => v.name == _prefs.getString(_viewKey),
+    orElse: () => HubView.list,
+  );
+
+  Future<void> setHubView(HubView view) async {
+    await _prefs.setString(_viewKey, view.name);
+    notifyListeners();
+  }
+
+  HubSort get hubSort => HubSort.values.firstWhere(
+    (s) => s.name == _prefs.getString(_sortKey),
+    orElse: () => HubSort.custom,
+  );
+
+  Future<void> setHubSort(HubSort sort) async {
+    await _prefs.setString(_sortKey, sort.name);
+    notifyListeners();
   }
 }
