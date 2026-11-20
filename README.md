@@ -9,6 +9,8 @@ style. Stars from every game add up and unlock color themes for all of them.
   <img src="docs/screenshots/bead_belt.png" width="200" alt="Bead Belt">
   <img src="docs/screenshots/cog_clash.png" width="200" alt="Cog Clash">
   <img src="docs/screenshots/gate_drop.png" width="200" alt="Gate Drop">
+  <img src="docs/screenshots/shikaku.png" width="200" alt="Shikaku">
+  <img src="docs/screenshots/kings.png" width="200" alt="Kings">
 </p>
 
 ## Games
