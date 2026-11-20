@@ -1,6 +1,6 @@
 # Lorem Arcade
 
-Four small puzzle and arcade games in one Android app, in one dark glass
+Six small puzzle and arcade games in one Android app, in one dark glass
 style. Stars from every game add up and unlock color themes for all of them.
 
 <p>
@@ -36,6 +36,18 @@ merge. Then press Fight and watch your fighter take on the wave.
 Hold and drag to pour balls from a cup through x2, x3 and x5 gates and past
 lock bars. Every ball that reaches the pipe fires at the horde. Stop it
 before it breaks through.
+
+### Shikaku
+A grid with numbered cells. Drag to draw rectangles so every rectangle holds
+exactly one number and covers that many cells. Tap a rectangle to remove it.
+Fill the whole grid; a rectangle that breaks the rules turns red and costs a
+star.
+
+### Kings
+A square grid split into colored regions. Place one king in every row, every
+column and every region, and no two kings may touch, not even diagonally.
+Tap a cell to mark it with an X, tap again for a king. A king that clashes
+turns red and costs a star.
 
 ## Features
 
