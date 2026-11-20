@@ -132,7 +132,7 @@ class _HubScreenState extends State<HubScreen> {
                     child: Row(
                       children: [
                         const Flexible(
-                          child: Text('Pocket Puzzles', style: AppText.display),
+                          child: Text('Lorem Arcade', style: AppText.display),
                         ),
                         const SizedBox(width: 12),
                         StarCountPill(stars: p.totalStars),

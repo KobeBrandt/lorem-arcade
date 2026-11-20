@@ -69,7 +69,7 @@ class ColorFlowApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Pocket Puzzles',
+      title: 'Lorem Arcade',
       debugShowCheckedModeBanner: false,
       theme: ThemeData.dark(useMaterial3: true)
           .copyWith(scaffoldBackgroundColor: AppColors.bgDeep),
