@@ -3,7 +3,9 @@ import 'package:flutter/material.dart';
 import '../games/bead_belt/bead_belt_game.dart';
 import '../games/cog_clash/cog_clash_game.dart';
 import '../games/gate_drop/gate_drop_game.dart';
+import '../games/kings/kings_game.dart';
 import '../games/moo_munch/moo_munch_game.dart';
+import '../games/shikaku/shikaku_game.dart';
 import 'arcade_level_game.dart';
 
 /// The level games in the hub, next to Color Flow.
@@ -28,6 +30,18 @@ enum ArcadeGame {
     'Pour balls through multiplier gates to stop the horde.',
     Icons.filter_alt_outlined,
     GateDropGame.new,
+  ),
+  shikaku(
+    'Shikaku',
+    'Split the grid into rectangles. Each holds one number and covers that many cells.',
+    Icons.dashboard_outlined,
+    ShikakuGame.new,
+  ),
+  kings(
+    'Kings',
+    'Crown one king in every row, column and color. Kings may never touch.',
+    Icons.workspace_premium_outlined,
+    KingsGame.new,
   ),
 
   /// Secret game, see [HubGame.mooMunch]. Its levels play here; its

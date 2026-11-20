@@ -20,6 +20,8 @@ const _visible = [
   HubGame.beadBelt,
   HubGame.cogClash,
   HubGame.gateDrop,
+  HubGame.shikaku,
+  HubGame.kings,
 ];
 
 void main() {
@@ -67,6 +69,8 @@ void main() {
         HubGame.beadBelt,
         HubGame.gateDrop,
         HubGame.cogClash,
+        HubGame.shikaku,
+        HubGame.kings,
         HubGame.mooMunch,
       ]);
       // Nothing moves past the edge.
@@ -132,7 +136,7 @@ void main() {
     final prefs = await _prefs();
     final settings = Settings(prefs);
     await pumpHub(tester, Progress(prefs), settings);
-    expect(find.byType(HubCard), findsNWidgets(4));
+    expect(find.byType(HubCard), findsNWidgets(_visible.length));
 
     await tester.tap(find.byTooltip('View and order'));
     await tester.pumpAndSettle();
@@ -141,11 +145,11 @@ void main() {
     expect(settings.hubView, HubView.grid);
     await tester.tapAt(const Offset(10, 10)); // close the sheet
     await tester.pumpAndSettle();
-    expect(find.byType(HubTile), findsNWidgets(4));
+    expect(find.byType(HubTile), findsNWidgets(_visible.length));
 
     await settings.setHubView(HubView.compact);
     await tester.pumpAndSettle();
-    expect(find.byType(HubCompactRow), findsNWidgets(4));
+    expect(find.byType(HubCompactRow), findsNWidgets(_visible.length));
   });
 
   testWidgets('recently played sorts the last opened game first', (
@@ -162,6 +166,8 @@ void main() {
       'Gate Drop',
       'Color Flow',
       'Bead Belt',
+      'Shikaku',
+      'Kings',
     ]);
   });
 

@@ -8,6 +8,8 @@ enum HubGame {
   beadBelt,
   cogClash,
   gateDrop,
+  shikaku,
+  kings,
 
   /// Secret game: it joins the hub the first time every other game is
   /// hidden, and stays from then on.
@@ -19,6 +21,8 @@ enum HubGame {
     HubGame.beadBelt => ArcadeGame.beadBelt,
     HubGame.cogClash => ArcadeGame.cogClash,
     HubGame.gateDrop => ArcadeGame.gateDrop,
+    HubGame.shikaku => ArcadeGame.shikaku,
+    HubGame.kings => ArcadeGame.kings,
     HubGame.mooMunch => ArcadeGame.mooMunch,
   };
 
