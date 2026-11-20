@@ -84,21 +84,26 @@ class StatsScreen extends StatelessWidget {
           ),
           const SizedBox(height: 12),
         ],
-        for (final game in ArcadeGame.values) ...[
-          GlassCard(
-            padding: const EdgeInsets.all(20),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(game.title, style: AppText.title.copyWith(fontSize: 18)),
-                const SizedBox(height: 8),
-                _Row('Level reached', '${p.gameLevel(game.id)}'),
-                _Row('Stars', '${p.gameStars(game.id)}'),
-              ],
+        for (final game in ArcadeGame.values)
+          if (game != ArcadeGame.mooMunch || p.mooMunchUnlocked) ...[
+            GlassCard(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(game.title, style: AppText.title.copyWith(fontSize: 18)),
+                  const SizedBox(height: 8),
+                  _Row('Level reached', '${p.gameLevel(game.id)}'),
+                  _Row('Stars', '${p.gameStars(game.id)}'),
+                  if (game.hasEndless) ...[
+                    _Row('Best endless score', '${p.gameBest(game.id)}'),
+                    _Row('Endless points', '${p.gamePoints(game.id)}'),
+                  ],
+                ],
+              ),
             ),
-          ),
-          const SizedBox(height: 12),
-        ],
+            const SizedBox(height: 12),
+          ],
       ],
     );
   }

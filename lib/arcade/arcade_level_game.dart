@@ -1,5 +1,5 @@
 import 'package:flame/game.dart';
-import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
 
 import '../game/game_feedback.dart';
 
@@ -29,13 +29,20 @@ class ArcadeResult {
   /// Won with 1 to 3 [stars].
   const ArcadeResult.won(int stars)
     : stars = stars < 1 ? 1 : (stars > 3 ? 3 : stars),
-      reason = '';
+      reason = '',
+      score = 0;
 
   /// Lost; [reason] is shown to the player, for example 'The belt is full'.
-  const ArcadeResult.lost(this.reason) : stars = 0;
+  const ArcadeResult.lost(this.reason) : stars = 0, score = 0;
+
+  /// An endless run ended with [score]; [reason] says why.
+  const ArcadeResult.ended(this.score, this.reason) : stars = 0;
 
   final int stars;
   final String reason;
+
+  /// Score of an ended endless run, else 0.
+  final int score;
 
   bool get won => stars > 0;
 }
@@ -61,6 +68,10 @@ abstract class ArcadeLevelGame extends FlameGame {
   /// True once the player did something that leaving would throw away.
   /// The shell asks before leaving or restarting only then.
   bool get hasProgress;
+
+  /// Optional Flutter controls the shell shows under the game, for
+  /// example arrow buttons. Null (the default) shows none.
+  Widget? buildControls(BuildContext context) => null;
 
   /// Ends the level. Later calls are ignored.
   @protected

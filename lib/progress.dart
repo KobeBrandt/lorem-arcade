@@ -139,10 +139,12 @@ class Progress {
 
   int get endlessStars => endlessPoints ~/ endlessPointsPerStar;
 
-  /// Best stars of every solved level and daily, plus the endless stars.
+  /// Best stars of every solved level and daily, plus the stars from
+  /// endless points of Color Flow and the hub games.
   int get totalStars =>
       _starKeys.fold(0, (sum, key) => sum + (_prefs.getInt(key) ?? 0)) +
-      endlessStars;
+      endlessStars +
+      _gameEndlessStars;
 
   /// Fastest win in [mode] in seconds, or null when never won.
   double? bestTime(GameMode mode) => _prefs.getDouble(_bestTimeKey(mode));
@@ -238,6 +240,51 @@ class Progress {
       _daily != null ||
       GameMode.values.any((mode) => bestTime(mode) != null) ||
       GameMode.values.any((mode) => mode.hasLevels && level(mode) > 1);
+
+  /// When the hub game [id] was last opened, or null when never.
+  DateTime? lastPlayed(String id) {
+    final ms = _prefs.getInt('played_$id');
+    return ms == null ? null : DateTime.fromMillisecondsSinceEpoch(ms);
+  }
+
+  Future<void> markPlayed(String id, DateTime when) =>
+      _prefs.setInt('played_$id', when.millisecondsSinceEpoch);
+
+  /// Moo Munch is the secret hub game. It joins the hub once every
+  /// other game is hidden and stays from then on.
+  static const String _mooUnlockedKey = 'moo_munch_unlocked';
+
+  bool get mooMunchUnlocked => _prefs.getBool(_mooUnlockedKey) ?? false;
+
+  Future<void> unlockMooMunch() => _prefs.setBool(_mooUnlockedKey, true);
+
+  // Endless runs of hub games (only Moo Munch has one now).
+
+  /// Points of all endless runs of one hub game: `points_{id}`.
+  static const String _gamePointsPrefix = 'points_';
+
+  /// Best endless score of the hub game [id] (0 when never played).
+  int gameBest(String id) => _prefs.getInt('best_$id') ?? 0;
+
+  /// Points earned in all endless runs of the hub game [id].
+  int gamePoints(String id) => _prefs.getInt('$_gamePointsPrefix$id') ?? 0;
+
+  /// Saves an ended endless run of the hub game [id]: the best score and
+  /// the points toward stars ([endlessPointsPerStar] points give 1 star).
+  Future<void> reportGameRun(String id, int score) async {
+    if (score <= 0) return;
+    if (score > gameBest(id)) await _prefs.setInt('best_$id', score);
+    await _prefs.setInt('$_gamePointsPrefix$id', gamePoints(id) + score);
+  }
+
+  /// Stars from the endless points of every hub game, per game.
+  int get _gameEndlessStars => _prefs
+      .getKeys()
+      .where((key) => key.startsWith(_gamePointsPrefix))
+      .fold(
+        0,
+        (sum, key) => sum + (_prefs.getInt(key) ?? 0) ~/ endlessPointsPerStar,
+      );
 
   static DateTime _yesterday(DateTime day) =>
       DateTime(day.year, day.month, day.day - 1);

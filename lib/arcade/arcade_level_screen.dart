@@ -21,9 +21,14 @@ class ArcadeLevelScreen extends StatefulWidget {
     required this.progress,
     required this.settings,
     this.sounds = const SilentSounds(),
+    this.endless = false,
   });
 
   final ArcadeGame game;
+
+  /// Plays the game's endless run instead of its levels. Only for games
+  /// with [ArcadeGame.hasEndless].
+  final bool endless;
   final Progress progress;
   final Settings settings;
   final GameSounds sounds;
@@ -34,7 +39,9 @@ class ArcadeLevelScreen extends StatefulWidget {
 
 class _ArcadeLevelScreenState extends State<ArcadeLevelScreen>
     with WidgetsBindingObserver {
-  late int _level = widget.progress.gameLevel(widget.game.id);
+  late int _level = widget.endless
+      ? 1
+      : widget.progress.gameLevel(widget.game.id);
   late ArcadeLevelGame _game;
   ArcadeResult? _result;
   bool _paused = false;
@@ -56,7 +63,10 @@ class _ArcadeLevelScreenState extends State<ArcadeLevelScreen>
   }
 
   ArcadeLevelGame _build() {
-    final game = widget.game.create(
+    final create = widget.endless
+        ? widget.game.createEndless!
+        : widget.game.create;
+    final game = create(
       ArcadeSetup(
         level: _level,
         style: widget.settings.blockStyle(widget.progress.totalStars),
@@ -84,7 +94,15 @@ class _ArcadeLevelScreenState extends State<ArcadeLevelScreen>
   Future<void> _onResult() async {
     final result = _game.result.value;
     if (result == null || !mounted) return;
-    if (result.won) {
+    if (widget.endless) {
+      final best = widget.progress.gameBest(widget.game.id);
+      await widget.progress.reportGameRun(widget.game.id, result.score);
+      if (result.score > best) {
+        widget.sounds.win();
+      } else {
+        widget.sounds.fail();
+      }
+    } else if (result.won) {
       widget.sounds.win();
       await widget.progress.recordGameStars(
         widget.game.id,
@@ -138,11 +156,15 @@ class _ArcadeLevelScreenState extends State<ArcadeLevelScreen>
     return ok;
   }
 
+  String get _lostMessage => widget.endless
+      ? 'This run will end.'
+      : 'Your progress in this level will be lost.';
+
   Future<void> _requestLeave() async {
     if (_needsConfirm &&
         !await _confirm(
-          'Leave this level?',
-          'Your progress in this level will be lost.',
+          widget.endless ? 'Leave this run?' : 'Leave this level?',
+          _lostMessage,
           'Leave',
         )) {
       return;
@@ -153,8 +175,8 @@ class _ArcadeLevelScreenState extends State<ArcadeLevelScreen>
   Future<void> _requestRestart() async {
     if (_needsConfirm &&
         !await _confirm(
-          'Restart this level?',
-          'Your progress in this level will be lost.',
+          widget.endless ? 'Start a new run?' : 'Restart this level?',
+          _lostMessage,
           'Restart',
         )) {
       return;
@@ -184,6 +206,7 @@ class _ArcadeLevelScreenState extends State<ArcadeLevelScreen>
                       game: _game,
                     ),
                   ),
+                  ?_game.buildControls(context),
                 ],
               ),
             ),
@@ -212,7 +235,9 @@ class _ArcadeLevelScreenState extends State<ArcadeLevelScreen>
               Semantics(
                 header: true,
                 child: Text(
-                  '${widget.game.title} · Level $_level',
+                  widget.endless
+                      ? '${widget.game.title} · Endless'
+                      : '${widget.game.title} · Level $_level',
                   style: AppText.title,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
@@ -235,14 +260,26 @@ class _ArcadeLevelScreenState extends State<ArcadeLevelScreen>
         const SizedBox(width: 12),
         RoundIconButton(
           icon: Icons.refresh_rounded,
-          tooltip: 'Restart level',
+          tooltip: widget.endless ? 'New run' : 'Restart level',
           onPressed: _requestRestart,
         ),
       ],
     ),
   );
 
-  Widget _resultCard(ArcadeResult result) => result.won
+  Widget _resultCard(ArcadeResult result) => widget.endless
+      ? LevelCompleteScreen(
+          pill: 'Endless',
+          title: 'Run over',
+          message:
+              '${result.reason}. Score ${result.score}, '
+              'best ${widget.progress.gameBest(widget.game.id)}.',
+          buttonLabel: 'Play again',
+          onPressed: _restartLevel,
+          secondaryLabel: 'Home',
+          onSecondary: () => Navigator.of(context).pop(),
+        )
+      : result.won
       ? LevelCompleteScreen(
           pill: 'Level $_level',
           title: 'Level complete',
