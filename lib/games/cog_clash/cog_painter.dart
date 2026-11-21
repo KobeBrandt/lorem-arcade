@@ -28,8 +28,15 @@ Path gearPath(double radius, int teeth, {double depth = 0.18}) {
 }
 
 /// Keeps laid out text so render does not build it every frame.
+/// Starts over once it holds [maxEntries] texts, so changing numbers
+/// (hit points, damage) cannot grow it without limit.
 class TextCache {
+  static const int maxEntries = 120;
+
   final Map<String, TextPainter> _cache = {};
+
+  /// Number of cached texts.
+  int get length => _cache.length;
 
   TextPainter get(
     String text, {
@@ -38,16 +45,16 @@ class TextCache {
     FontWeight weight = FontWeight.w700,
   }) {
     final key = '$text|$size|${color.toARGB32()}|${weight.value}';
-    return _cache.putIfAbsent(
-      key,
-      () => TextPainter(
-        textDirection: TextDirection.ltr,
-        text: TextSpan(
-          text: text,
-          style: TextStyle(fontSize: size, fontWeight: weight, color: color),
-        ),
-      )..layout(),
-    );
+    final cached = _cache[key];
+    if (cached != null) return cached;
+    if (_cache.length >= maxEntries) _cache.clear();
+    return _cache[key] = (TextPainter(
+      textDirection: TextDirection.ltr,
+      text: TextSpan(
+        text: text,
+        style: TextStyle(fontSize: size, fontWeight: weight, color: color),
+      ),
+    )..layout());
   }
 
   /// Paints [text] centered on [center].

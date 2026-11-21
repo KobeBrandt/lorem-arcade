@@ -22,6 +22,10 @@ class Gear {
   /// costs 6 and a 3x gear costs 10.
   int get price => isNumber ? value : (value == 2 ? 6 : 10);
 
+  /// Coins back when the gear is sold: half its price, rounded down.
+  /// A merged number gear sells by its value.
+  int get sellPrice => price ~/ 2;
+
   @override
   bool operator ==(Object other) =>
       other is Gear && other.kind == kind && other.value == value;
@@ -97,19 +101,45 @@ class CogBoard {
   /// Puts [gear] in an empty [socket]. Returns null when the socket is
   /// taken. A number gear next to a number gear of the same value merges
   /// into that neighbor (which then holds the sum) and [socket] stays
-  /// empty.
+  /// empty. The merged gear keeps merging while it has an equal number
+  /// neighbor, so 2 + 2 next to a 4 ends as one 8.
   Placement? place(int socket, Gear gear) {
     if (!isEmpty(socket)) return null;
-    if (gear.isNumber) {
-      for (final n in neighbors(socket)) {
-        if (_gears[n] == gear) {
-          _gears[n] = Gear.number(gear.value * 2);
-          return Placement(n, merged: true);
-        }
-      }
+    if (!gear.isNumber) {
+      _gears[socket] = gear;
+      return Placement(socket);
     }
-    _gears[socket] = gear;
-    return Placement(socket);
+    var at = socket;
+    var current = gear;
+    var merged = false;
+    while (true) {
+      final into = _equalNeighbor(at, current);
+      if (into == null) break;
+      _gears[at] = null;
+      current = Gear.number(current.value * 2);
+      _gears[into] = current;
+      at = into;
+      merged = true;
+    }
+    _gears[at] = current;
+    return Placement(at, merged: merged);
+  }
+
+  /// First neighbor of [socket] that holds a gear equal to [gear].
+  int? _equalNeighbor(int socket, Gear gear) {
+    for (final n in neighbors(socket)) {
+      if (_gears[n] == gear) return n;
+    }
+    return null;
+  }
+
+  /// Takes the gear out of [socket] and returns it. Null when the socket
+  /// holds no gear (weapons cannot be removed).
+  Gear? remove(int socket) {
+    if (isWeapon(socket)) return null;
+    final gear = _gears[socket];
+    _gears[socket] = null;
+    return gear;
   }
 
   /// Gear sockets linked to [weapon] through orthogonally adjacent gears.
@@ -162,19 +192,58 @@ class CogBoard {
   CogBoard copy() => CogBoard._copy(this);
 }
 
-/// Numbers for one level. Everything grows with the level number.
+/// One wave of enemies. They share [hp]; each defeated enemy pays
+/// [coinsPerKill] coins.
+class CogWave {
+  const CogWave({
+    required this.hp,
+    required this.enemyCount,
+    required this.speed,
+    required this.dps,
+    required this.coinsPerKill,
+  });
+
+  /// Shared HP of the whole wave.
+  final int hp;
+  final int enemyCount;
+
+  /// Arena units per second (the arena is [CogBattle.arenaLength] long).
+  final double speed;
+
+  /// Damage per second the front enemy deals while it touches the fighter.
+  final double dps;
+
+  final int coinsPerKill;
+
+  /// Wave with strength [s]: 0 is the first wave of level 1, and every
+  /// step up is a little harder.
+  factory CogWave.ofStrength(double s, int enemyCount) {
+    final capped = min(s, 24.0);
+    return CogWave(
+      hp: (24 * pow(1.32, s) + 6 * s).round(),
+      enemyCount: enemyCount,
+      speed: 6 + 0.45 * capped,
+      dps: 8 + 0.7 * capped,
+      coinsPerKill: 1 + (s ~/ 4),
+    );
+  }
+}
+
+/// Numbers for one level, or for the endless run. Enemies come in waves
+/// while the player builds; everything grows with the level number and
+/// with each wave.
 class CogLevel {
   CogLevel._({
     required this.level,
     required this.coins,
-    required this.waveHp,
-    required this.enemyCount,
-    required this.enemySpeed,
-    required this.enemyDps,
+    required this.waveCount,
     required this.weapons,
     required this.maxNumber,
     required this.multiplierChance,
     required this.hintSocket,
+    required this.strength,
+    required this.strengthPerWave,
+    required this.enemyCount,
   });
 
   /// Level [level] (1-based) on a 5 x 4 board.
@@ -182,40 +251,53 @@ class CogLevel {
     final l = max(1, level);
     // Difficulty stops growing after level 20.
     final n = min(l, 20) - 1;
-    // Weapon A sits on the left edge, weapon B on the right edge.
-    const weaponA = 1 * cols + 0;
-    const weaponB = 2 * cols + (cols - 1);
     return CogLevel._(
       level: l,
-      coins: 8 + 2 * n,
-      waveHp: 20 + 14 * n + 3 * n * n,
-      enemyCount: min(8, 3 + l ~/ 2),
-      enemySpeed: 7 + 0.6 * n,
-      enemyDps: 8 + n.toDouble(),
+      coins: 6 + n,
+      waveCount: l <= 3
+          ? 2
+          : l <= 9
+          ? 3
+          : 4,
       weapons: l >= 4 ? const [weaponA, weaponB] : const [weaponA],
       maxNumber: min(8, 3 + n ~/ 2),
       multiplierChance: l < 3 ? 0 : min(0.25, 0.12 + 0.02 * n),
       hintSocket: l == 1 ? weaponA + 1 : null,
+      strength: n * 0.8,
+      strengthPerWave: 1.5,
+      enemyCount: min(6, 3 + l ~/ 3),
     );
   }
+
+  /// The endless run: waves never stop and keep getting stronger.
+  factory CogLevel.endless() => CogLevel._(
+    level: 0,
+    coins: 8,
+    waveCount: null,
+    weapons: const [weaponA, weaponB],
+    maxNumber: 6,
+    multiplierChance: 0.2,
+    hintSocket: null,
+    strength: 0,
+    strengthPerWave: 1.2,
+    enemyCount: 4,
+  );
 
   static const int cols = 5;
   static const int rows = 4;
 
+  /// Weapon A sits on the left edge, weapon B on the right edge.
+  static const int weaponA = 1 * cols + 0;
+  static const int weaponB = 2 * cols + (cols - 1);
+
+  /// 1-based level, 0 for the endless run.
   final int level;
 
-  /// Coins to spend in the build phase.
+  /// Coins at the start. Defeated enemies pay more.
   final int coins;
 
-  /// Shared HP of the whole wave.
-  final int waveHp;
-  final int enemyCount;
-
-  /// Arena units per second (the arena is [CogBattle.arenaLength] long).
-  final double enemySpeed;
-
-  /// Damage per second the front enemy deals while it touches the fighter.
-  final double enemyDps;
+  /// Waves to defeat to win, or null for the endless run.
+  final int? waveCount;
 
   /// Weapon sockets on the board edges.
   final List<int> weapons;
@@ -229,10 +311,27 @@ class CogLevel {
   /// Socket highlighted to teach the first placement, or null.
   final int? hintSocket;
 
+  /// Strength of the first wave, see [CogWave.ofStrength].
+  final double strength;
+
+  /// Strength added by each later wave.
+  final double strengthPerWave;
+
+  /// Enemies per wave (the endless run adds more over time).
+  final int enemyCount;
+
+  bool get isEndless => waveCount == null;
+
+  /// Wave [index] (0-based).
+  CogWave wave(int index) => CogWave.ofStrength(
+    strength + strengthPerWave * index,
+    isEndless ? min(8, enemyCount + index ~/ 3) : enemyCount,
+  );
+
   CogBoard newBoard() => CogBoard(cols: cols, rows: rows, weapons: weapons);
 }
 
-/// The coins and the three offers of the build phase.
+/// The coins and the three offers of the shop.
 class CogShop {
   CogShop(this.config) : coins = config.coins, _random = Random(config.level) {
     for (var i = 0; i < offerCount; i++) {
@@ -259,6 +358,9 @@ class CogShop {
     offers[offer] = _roll();
     return gear;
   }
+
+  /// Adds the sell price of [gear] to the coins.
+  void sell(Gear gear) => coins += gear.sellPrice;
 
   /// Replaces all offers for [rerollPrice]. False without coins.
   bool reroll() {
