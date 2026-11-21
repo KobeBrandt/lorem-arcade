@@ -21,15 +21,17 @@ enum ArcadeGame {
   ),
   cogClash(
     'Cog Clash',
-    'Link gears to your weapon, then watch your fighter take on the wave.',
+    'Link gears to your weapons while the waves walk in.',
     Icons.settings_suggest_outlined,
     CogClashGame.new,
+    CogClashGame.endless,
   ),
   gateDrop(
     'Gate Drop',
     'Pour balls through multiplier gates to stop the horde.',
     Icons.filter_alt_outlined,
     GateDropGame.new,
+    GateDropGame.endless,
   ),
   shikaku(
     'Shikaku',

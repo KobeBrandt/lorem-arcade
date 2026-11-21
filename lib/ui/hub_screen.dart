@@ -10,7 +10,7 @@ import 'app_theme.dart';
 import 'game_screen.dart';
 import 'glass_page.dart';
 import 'home_screen.dart';
-import 'moo_munch_screen.dart';
+import 'arcade_mode_screen.dart';
 import 'settings_screen.dart';
 import 'stats_screen.dart';
 import 'themes_screen.dart';
@@ -64,7 +64,8 @@ class _HubScreenState extends State<HubScreen> {
       );
     } else if (arcade.hasEndless) {
       await _push(
-        (_) => MooMunchScreen(
+        (_) => ArcadeModeScreen(
+          game: arcade,
           progress: _progress,
           settings: _settings,
           sounds: widget.sounds,
