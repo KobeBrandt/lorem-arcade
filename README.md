@@ -30,14 +30,22 @@ scoops up beads of its color until it is full and leaves. Clear the belt
 before it jams.
 
 ### Cog Clash
-Buy gears and place them on a grid so they link to your weapon. Number gears
-add power, 2x and 3x gears multiply it, and equal gears next to each other
-merge. Then press Fight and watch your fighter take on the wave.
+Buy gears and place them on a grid so they link to your weapons while waves
+of enemies walk in. Number gears add power, 2x and 3x gears multiply it, and
+equal gears next to each other merge. Power changes the moment you place or
+sell a gear, and defeated enemies pay coins for more. Beat 2 to 4 waves per
+level, or play **Endless**: the waves never stop, and your score is the
+number of waves you clear.
 
 ### Gate Drop
 Hold and drag to pour balls from a cup through x2, x3 and x5 gates and past
 lock bars. Every ball that reaches the pipe fires at the horde. Stop it
-before it breaks through.
+before it breaks through. Watch out for /2 traps, bounce off bumpers, send
+balls back to the cup through refill gates and hit the small, fast x10
+jackpot. Multiplies fill the fever meter for a few seconds of double
+damage, and big bursts push the horde back. Every 5th level is a shielded
+boss, every 7th a bonus level without a horde. Or play **Endless**: wave
+after wave on new shafts, and your score is the number of waves you clear.
 
 ### Shikaku
 A grid with numbered cells. Drag to draw rectangles so every rectangle holds
@@ -48,8 +56,9 @@ star.
 ### Kings
 A square grid split into colored regions. Place one king in every row, every
 column and every region, and no two kings may touch, not even diagonally.
-Tap a cell to mark it with an X, tap again for a king. A king that clashes
-turns red and costs a star.
+Tap a cell to place a king, tap it again to take it off. Cells a king rules
+out are crossed out on their own. A king that clashes turns red, and both a
+clash and taking a king off cost a star.
 
 ## Features
 
