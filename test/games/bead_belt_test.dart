@@ -4,6 +4,7 @@ import 'package:lorem_arcade/arcade/arcade_level_game.dart';
 import 'package:lorem_arcade/game/game_feedback.dart';
 import 'package:lorem_arcade/games/bead_belt/bead_belt_game.dart';
 import 'package:lorem_arcade/games/bead_belt/bead_belt_level.dart';
+import 'package:lorem_arcade/games/bead_belt/bead_belt_model.dart';
 import 'package:lorem_arcade/ui/app_theme.dart';
 import 'package:flame/game.dart';
 import 'package:flame_test/flame_test.dart';
@@ -228,6 +229,81 @@ void main() {
         expect(result.reason, 'The belt jammed');
       },
     );
+
+    testWithGame<BeadBeltGame>(
+      'a rejected tap marks its lane for a short shake',
+      () => BeadBeltGame(_setup(1)),
+      (game) async {
+        _prepare(game);
+        expect(game.rejectedLane, -1);
+        game
+          ..tapLane(0)
+          ..tapLane(0);
+        expect(game.tapLane(0), isFalse);
+        expect(game.rejectedLane, 0);
+        game.render(Canvas(PictureRecorder()));
+        // Frames are capped at 0.1 s, so step through the shake.
+        for (var i = 0; i < 30; i++) {
+          game.update(1 / 60);
+        }
+        expect(game.rejectedLane, -1);
+      },
+    );
+
+    test('stars follow the highest belt fill', () {
+      final model = BeadBeltModel(BeadBeltLevel.generate(1));
+      expect(model.stars, 3);
+      model.maxFill = 0.75;
+      expect(model.stars, 3);
+      model.maxFill = 0.76;
+      expect(model.stars, 2);
+      model.maxFill = 0.99;
+      expect(model.stars, 2);
+      model.maxFill = 1;
+      expect(model.stars, 1);
+    });
+
+    test('the preview shows the next reservoir beads in order', () {
+      final level = BeadBeltLevel.generate(6);
+      final model = BeadBeltModel(level);
+      expect(model.upcoming(5), level.reservoir.take(5).toList());
+      model.dockFront(0);
+      while (model.reservoirCount == level.reservoir.length) {
+        model.update(1 / 60);
+      }
+      final fed = level.reservoir.length - model.reservoirCount;
+      expect(model.upcoming(5), level.reservoir.skip(fed).take(5).toList());
+      expect(
+        model.upcoming(level.reservoir.length + 10).length,
+        model.reservoirCount,
+      );
+    });
+
+    for (final shapes in [true, false]) {
+      testWithGame<BeadBeltGame>(
+        'renders a busy belt with shapes ${shapes ? 'on' : 'off'}',
+        () => BeadBeltGame(
+          ArcadeSetup(
+            level: 12,
+            style: BlockStyle(palette: AppColors.blocks, showShapes: shapes),
+            haptics: false,
+          ),
+        ),
+        (game) async {
+          _prepare(game);
+          for (var lane = 0; lane < game.model.lanes.length; lane++) {
+            game.tapLane(lane);
+          }
+          for (var i = 0; i < 60 * 8; i++) {
+            game.update(1 / 60);
+          }
+          expect(game.model.beltCount, greaterThan(0));
+          final recorder = PictureRecorder();
+          game.render(Canvas(recorder));
+          recorder.endRecording().dispose();
+        },
+      );
+    }
 
     testWithGame<BeadBeltGame>(
       'the belt does not feed before the first tap',

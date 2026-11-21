@@ -25,10 +25,8 @@ abstract final class BeltShape {
 
   /// Loop position of dock [index] out of [count]. Docks sit along the
   /// bottom straight, left to right.
-  static double dockU(int index, int count) {
-    final x = -0.6 + 1.2 * (index + 0.5) / count;
-    return ((-x) % length) / length;
-  }
+  static double dockU(int index, int count) =>
+      ((-dockX(index, count)) % length) / length;
 
   /// Horizontal shape coordinate of dock [index] out of [count].
   static double dockX(int index, int count) =>

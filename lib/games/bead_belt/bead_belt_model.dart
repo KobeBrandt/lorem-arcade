@@ -124,6 +124,13 @@ class BeadBeltModel {
     return 1;
   }
 
+  /// The next [count] bead colors the reservoir will feed, first first.
+  /// Shorter when fewer beads are left.
+  List<int> upcoming(int count) => _reservoir.take(count).toList();
+
+  /// Belt fill from 0 (empty) to 1 (full).
+  double get fill => beltCount / beltCapacity;
+
   /// Number of beads of [color] on the belt.
   int beltCountOf(int color) => _slots.where((c) => c == color).length;
 

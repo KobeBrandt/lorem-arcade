@@ -32,9 +32,24 @@ class BeadBeltGame extends ArcadeLevelGame with TapCallbacks {
   double _comboTimer = 0;
   final List<_Ring> _rings = [];
 
+  /// Lane of the last rejected tap and the time since, for the shake.
+  int _rejectLane = -1;
+  double _rejectAge = _rejectLife;
+
   /// Seconds within which a next filled bucket raises the combo.
   static const double _comboWindow = 2;
   static const double _slideDuration = 0.25;
+  static const double _rejectLife = 0.35;
+
+  /// Upcoming bead colors shown next to the hopper.
+  static const int previewCount = 5;
+
+  /// Belt fill from which the belt warns that it is close to jamming.
+  static const double warnFill = 0.8;
+
+  /// Color id for the shape on a bead or bucket, or null when the theme
+  /// draws no shapes.
+  int? _symbol(int color) => setup.style.showShapes ? color : null;
 
   @override
   bool get hasProgress => _tapped;
@@ -62,6 +77,8 @@ class BeadBeltGame extends ArcadeLevelGame with TapCallbacks {
     final dock = model.dockFront(lane);
     if (dock == null) {
       setup.sounds.blocked();
+      _rejectLane = lane;
+      _rejectAge = 0;
       return false;
     }
     _tapped = true;
@@ -94,6 +111,7 @@ class BeadBeltGame extends ArcadeLevelGame with TapCallbacks {
     // Long frames (for example after a pause) must not skip the rules.
     final step = min(dt, 0.1);
     _time += step;
+    _rejectAge += step;
     _comboTimer = max(0, _comboTimer - step);
     for (final ring in _rings) {
       ring.t += step / 0.5;
@@ -244,6 +262,12 @@ class BeadBeltGame extends ArcadeLevelGame with TapCallbacks {
     ..strokeWidth = 2
     ..strokeCap = StrokeCap.round;
   final Paint _ringPaint = Paint()..style = PaintingStyle.stroke;
+  final Paint _rejectPaint = Paint()
+    ..style = PaintingStyle.stroke
+    ..strokeWidth = 2.5;
+
+  /// Lane that last rejected a tap, or -1 (for tests).
+  int get rejectedLane => _rejectAge < _rejectLife ? _rejectLane : -1;
 
   @override
   void render(Canvas canvas) {
@@ -277,11 +301,20 @@ class BeadBeltGame extends ArcadeLevelGame with TapCallbacks {
       ),
       Radius.circular(_scale * BeltShape.radius),
     );
+    // The belt edge turns red when full and pulses red when close to it.
+    final fill = model.fill;
+    final Color edge;
+    if (fill >= 1) {
+      edge = AppColors.danger.withValues(alpha: 0.6);
+    } else if (fill >= warnFill) {
+      final pulse = 0.5 + 0.5 * sin(_time * 8);
+      edge = AppColors.danger.withValues(alpha: 0.2 + 0.35 * pulse);
+    } else {
+      edge = AppColors.glassBorder;
+    }
     _beltStroke
-      ..strokeWidth = _channel + 2
-      ..color = model.beltCount >= model.beltCapacity
-          ? AppColors.danger.withValues(alpha: 0.6)
-          : AppColors.glassBorder;
+      ..strokeWidth = _channel + (fill >= warnFill ? 4 : 2)
+      ..color = edge;
     canvas.drawRRect(belt, _beltStroke);
     _beltStroke
       ..strokeWidth = _channel
@@ -329,6 +362,7 @@ class BeadBeltGame extends ArcadeLevelGame with TapCallbacks {
         _beltPoint(model.slotU(i)),
         _beadRadius,
         setup.style.palette[color],
+        symbol: _symbol(color),
       );
     }
   }
@@ -349,6 +383,24 @@ class BeadBeltGame extends ArcadeLevelGame with TapCallbacks {
       canvas,
       _hopperRect.center - Offset(label.width / 2, label.height / 2),
     );
+
+    // The next beads to come, nearest first, fading out.
+    final next = model.upcoming(previewCount);
+    const radius = 5.5;
+    for (var k = 0; k < next.length; k++) {
+      final at = Offset(
+        _hopperRect.right + 12 + radius + k * radius * 2.6,
+        _hopperRect.center.dy,
+      );
+      final color = setup.style.palette[next[k]];
+      _painter.bead(
+        canvas,
+        at,
+        radius,
+        color.withValues(alpha: 1 - k * 0.15),
+        symbol: _symbol(next[k]),
+      );
+    }
   }
 
   void _renderDocks(Canvas canvas) {
@@ -384,6 +436,7 @@ class BeadBeltGame extends ArcadeLevelGame with TapCallbacks {
         fill: bucket.collected / bucket.capacity,
         label: '${bucket.capacity - bucket.collected}',
         opacity: opacity,
+        symbol: _symbol(bucket.color),
       );
     }
   }
@@ -398,6 +451,15 @@ class BeadBeltGame extends ArcadeLevelGame with TapCallbacks {
       );
       canvas.drawRRect(lane, _wellFill);
       canvas.drawRRect(lane, _cardBorder);
+      // A rejected tap shakes a red outline on the lane.
+      if (i == _rejectLane && _rejectAge < _rejectLife) {
+        final k = _rejectAge / _rejectLife;
+        _rejectPaint.color = AppColors.danger.withValues(alpha: 1 - k);
+        canvas.drawRRect(
+          lane.shift(Offset(sin(_rejectAge * 60) * 4 * (1 - k), 0)),
+          _rejectPaint,
+        );
+      }
       final queue = model.lanes[i];
       if (queue.isEmpty) continue;
 
@@ -410,6 +472,7 @@ class BeadBeltGame extends ArcadeLevelGame with TapCallbacks {
         label: '${front.capacity}',
         opacity: canDock ? 1 : 0.55,
         highlight: canDock && hint > 0.5,
+        symbol: _symbol(front.color),
       );
 
       // Waiting buckets, smaller, as many as fit.
@@ -440,6 +503,7 @@ class BeadBeltGame extends ArcadeLevelGame with TapCallbacks {
           ),
           setup.style.palette[queue[q].color],
           opacity: 0.45,
+          symbol: _symbol(queue[q].color),
         );
         y += _queueSize * 0.8 + 10;
       }
@@ -457,6 +521,7 @@ class BeadBeltGame extends ArcadeLevelGame with TapCallbacks {
         at,
         _beadRadius * (1 - 0.3 * t),
         setup.style.palette[bead.color],
+        symbol: _symbol(bead.color),
       );
     }
   }

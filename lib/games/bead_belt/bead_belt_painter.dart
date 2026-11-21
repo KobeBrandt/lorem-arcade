@@ -1,6 +1,7 @@
 import 'package:flutter/painting.dart';
 
 import '../../ui/app_theme.dart';
+import '../../ui/color_symbol.dart';
 
 /// Drawing helpers for Bead Belt: buckets, beads and cached labels.
 class BeadBeltPainter {
@@ -11,9 +12,13 @@ class BeadBeltPainter {
     ..style = PaintingStyle.stroke
     ..strokeJoin = StrokeJoin.round;
   final Paint _shine = Paint()..color = const Color(0x59FFFFFF);
+  final Paint _layer = Paint();
+  final Paint _symbol = Paint();
 
   /// A bucket in [rect]: a tapered body in [color], filled up to [fill]
-  /// (0..1), with an optional [label] in the middle.
+  /// (0..1), with an optional [label] in the middle. With a [symbol]
+  /// (a color id) the color's shape is drawn as well, see
+  /// [drawColorSymbol].
   void bucket(
     Canvas canvas,
     Rect rect,
@@ -22,6 +27,7 @@ class BeadBeltPainter {
     String? label,
     double opacity = 1,
     bool highlight = false,
+    int? symbol,
   }) {
     final body = _bodyPath(rect);
     _fill.color = color.withValues(alpha: 0.22 * opacity);
@@ -52,24 +58,50 @@ class BeadBeltPainter {
       ),
       _fill,
     );
+    // With a label the shape sits under it, else in the middle.
+    final labelShift = symbol != null && label != null
+        ? rect.height * 0.14
+        : 0.0;
+    if (symbol != null) {
+      final at = label != null
+          ? Offset(rect.center.dx, rect.bottom - rect.height * 0.2)
+          : rect.center + Offset(0, rect.height * 0.04);
+      final size = rect.height * (label != null ? 0.2 : 0.34);
+      _symbol.color = (fill > 0.75 ? symbolColorOn(color) : AppColors.text)
+          .withValues(alpha: 0.75 * opacity);
+      drawColorSymbol(canvas, symbol, at, size, _symbol);
+    }
     if (label != null) {
       final painter = text(label, rect.height * 0.32, AppColors.text);
       canvas.saveLayer(
         rect.inflate(4),
-        Paint()..color = Color.fromRGBO(255, 255, 255, opacity),
+        _layer..color = Color.fromRGBO(255, 255, 255, opacity),
       );
       painter.paint(
         canvas,
-        rect.center - Offset(painter.width / 2, painter.height / 2 - 2),
+        rect.center -
+            Offset(painter.width / 2, painter.height / 2 - 2 + labelShift),
       );
       canvas.restore();
     }
   }
 
-  /// A round bead with a small shine.
-  void bead(Canvas canvas, Offset center, double radius, Color color) {
+  /// A round bead with a small shine. With a [symbol] (a color id) the
+  /// color's shape is drawn on it instead of the shine.
+  void bead(
+    Canvas canvas,
+    Offset center,
+    double radius,
+    Color color, {
+    int? symbol,
+  }) {
     _fill.color = color;
     canvas.drawCircle(center, radius, _fill);
+    if (symbol != null) {
+      _symbol.color = symbolColorOn(color);
+      drawColorSymbol(canvas, symbol, center, radius * 1.15, _symbol);
+      return;
+    }
     canvas.drawCircle(
       center - Offset(radius * 0.3, radius * 0.35),
       radius * 0.35,
