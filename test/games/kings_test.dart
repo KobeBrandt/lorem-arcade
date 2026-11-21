@@ -83,7 +83,7 @@ void main() {
         final p = generateKingsPuzzle(level);
         final board = KingsBoard(p);
         for (var row = 0; row < p.size; row++) {
-          board.marks[row * p.size + p.solution[row]] = KingsMark.king;
+          board.setKing(row * p.size + p.solution[row]);
         }
         expect(board.solved, isTrue);
       }
@@ -118,43 +118,46 @@ void main() {
       expect(kingsClash(_small, at(0, 0), at(2, 3)), isFalse);
     });
 
-    test('a tap cycles empty, cross, king, empty', () {
+    test('a tap toggles a king and crosses the cells it rules out', () {
       final board = KingsBoard(_small);
       expect(board.markAt(0, 0), KingsMark.empty);
-      expect(board.tap(0, 0), KingsTapOutcome.crossed);
-      expect(board.markAt(0, 0), KingsMark.cross);
       expect(board.tap(0, 0), KingsTapOutcome.king);
       expect(board.markAt(0, 0), KingsMark.king);
+      expect(board.mistakes, 0);
+      // Row, column, touching cells and region are crossed; others not.
+      expect(board.markAt(0, 3), KingsMark.cross); // row
+      expect(board.markAt(3, 0), KingsMark.cross); // column
+      expect(board.markAt(1, 1), KingsMark.cross); // diagonal touch
+      expect(board.markAt(0, 2), KingsMark.cross); // row
+      expect(board.markAt(1, 2), KingsMark.empty);
+      expect(board.markAt(2, 3), KingsMark.empty);
       expect(board.tap(0, 0), KingsTapOutcome.cleared);
       expect(board.markAt(0, 0), KingsMark.empty);
+      expect(board.markAt(0, 3), KingsMark.empty);
+      expect(board.mistakes, 1); // taking a king off is a mistake
       expect(board.tap(-1, 0), KingsTapOutcome.ignored);
       expect(board.tap(0, 4), KingsTapOutcome.ignored);
-      expect(board.mistakes, 0);
+      expect(board.mistakes, 1);
     });
 
-    test('a clashing king stays, turns red and counts one mistake', () {
+    test('a king on a crossed cell clashes, turns red and is a mistake', () {
       final board = KingsBoard(_small);
-      board
-        ..tap(0, 1)
-        ..tap(0, 1); // king, region 0
+      expect(board.tap(0, 1), KingsTapOutcome.king); // region 0
       expect(board.clashingKings, isEmpty);
-      board.tap(1, 0); // cross: never a mistake
-      expect(board.mistakes, 0);
+      expect(board.markAt(1, 0), KingsMark.cross);
       expect(board.tap(1, 0), KingsTapOutcome.clash); // touches and region 0
       expect(board.markAt(1, 0), KingsMark.king);
       expect(board.mistakes, 1);
       expect(board.clashingKings, {at(0, 1), at(1, 0)});
 
-      // Taking it off clears the red; the mistake stays.
-      board.tap(1, 0);
+      // Taking it off clears the red and is one more mistake.
+      expect(board.tap(1, 0), KingsTapOutcome.cleared);
       expect(board.clashingKings, isEmpty);
-      expect(board.mistakes, 1);
-
-      // A second clash with two kings still counts once.
-      board
-        ..tap(3, 1)
-        ..tap(3, 1); // column of (0, 1)
       expect(board.mistakes, 2);
+
+      // A clash with two kings still counts once.
+      expect(board.tap(3, 1), KingsTapOutcome.clash); // column of (0, 1)
+      expect(board.mistakes, 3);
       expect(board.clashingKings, {at(0, 1), at(3, 1)});
       expect(board.solved, isFalse);
     });
@@ -163,9 +166,7 @@ void main() {
       final board = KingsBoard(_small);
       for (var row = 0; row < 4; row++) {
         expect(board.solved, isFalse);
-        board
-          ..tap(row, _small.solution[row])
-          ..tap(row, _small.solution[row]);
+        expect(board.tap(row, _small.solution[row]), KingsTapOutcome.king);
       }
       expect(board.kingCount, 4);
       expect(board.solved, isTrue);
@@ -209,12 +210,11 @@ void main() {
       expect(game.hasProgress, isFalse);
       game.tapCell(0, 0);
       expect(game.hasProgress, isTrue);
-      expect(game.status.value, 'Kings 0/$n · Mistakes 0');
-      game.tapCell(0, 0);
-      game
-        ..tapCell(0, 1)
-        ..tapCell(0, 1); // same row
+      expect(game.status.value, 'Kings 1/$n · Mistakes 0');
+      game.tapCell(0, 1); // same row
       expect(game.status.value, 'Kings 2/$n · Mistakes 1');
+      game.tapCell(0, 1); // taken off
+      expect(game.status.value, 'Kings 1/$n · Mistakes 2');
       expect(game.result.value, isNull);
     });
 
@@ -227,14 +227,10 @@ void main() {
           if (c != p.solution[0]) c,
       ].take(3);
       for (final c in wrong) {
-        game
-          ..tapCell(0, c)
-          ..tapCell(0, c);
+        game.tapCell(0, c);
       }
       for (var row = 0; row < p.size; row++) {
-        game
-          ..tapCell(row, p.solution[row])
-          ..tapCell(row, p.solution[row]);
+        game.tapCell(row, p.solution[row]);
       }
       expect(game.result.value, isNull); // wrong kings still stand
       for (final c in wrong) {
@@ -252,9 +248,7 @@ void main() {
         expect(game.cell, greaterThan(1));
         final p = game.board.puzzle;
         for (var row = 0; row < p.size; row++) {
-          expect(game.tapCell(row, p.solution[row]), KingsTapOutcome.crossed);
-          final outcome = game.tapCell(row, p.solution[row]);
-          expect(outcome, KingsTapOutcome.king);
+          expect(game.tapCell(row, p.solution[row]), KingsTapOutcome.king);
         }
         expect(game.result.value?.won, isTrue);
         expect(game.result.value?.stars, 3);

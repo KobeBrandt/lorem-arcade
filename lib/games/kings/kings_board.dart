@@ -1,4 +1,5 @@
-/// What a Kings cell holds. A tap cycles empty, cross, king, empty.
+/// What a Kings cell shows. A tap toggles a king; crosses come on their
+/// own on every cell that a standing king rules out.
 enum KingsMark { empty, cross, king }
 
 /// One Kings puzzle: a [size] x [size] grid split into [size] regions.
@@ -22,16 +23,13 @@ class KingsPuzzle {
 
 /// What a tap on a cell did.
 enum KingsTapOutcome {
-  /// The cell got a cross.
-  crossed,
-
   /// A king was placed and breaks no rule.
   king,
 
   /// A king was placed and clashes with another king: a mistake.
   clash,
 
-  /// A king was taken off the cell.
+  /// A king was taken off the cell: also a mistake.
   cleared,
 
   /// Nothing happened (the puzzle is solved or the cell is outside).
@@ -59,32 +57,43 @@ int kingsStars(int mistakes) {
   return 1;
 }
 
-/// The player's marks on a [KingsPuzzle] and the rule checks. Free of
+/// The player's kings on a [KingsPuzzle] and the rule checks. Free of
 /// Flame so it can be tested on its own.
 class KingsBoard {
   KingsBoard(this.puzzle)
-    : marks = List.filled(puzzle.size * puzzle.size, KingsMark.empty);
+    : _kings = List.filled(puzzle.size * puzzle.size, false);
 
   final KingsPuzzle puzzle;
 
-  /// Mark per cell, row by row.
-  final List<KingsMark> marks;
+  /// True per cell, row by row, where a king stands.
+  final List<bool> _kings;
 
-  /// King placements that created a clash. Crosses never count.
+  /// Clashing king placements plus kings taken off again.
   int mistakes = 0;
 
   int get size => puzzle.size;
 
-  KingsMark markAt(int row, int col) => marks[row * size + col];
+  /// King when one stands on the cell, cross when a standing king rules
+  /// the cell out, else empty.
+  KingsMark markAt(int row, int col) {
+    final index = row * size + col;
+    if (_kings[index]) return KingsMark.king;
+    return kings.any((k) => kingsClash(puzzle, index, k))
+        ? KingsMark.cross
+        : KingsMark.empty;
+  }
 
-  int get kingCount => marks.where((m) => m == KingsMark.king).length;
+  int get kingCount => _kings.where((k) => k).length;
 
   /// Cell indexes of all kings.
   Iterable<int> get kings sync* {
-    for (var i = 0; i < marks.length; i++) {
-      if (marks[i] == KingsMark.king) yield i;
+    for (var i = 0; i < _kings.length; i++) {
+      if (_kings[i]) yield i;
     }
   }
+
+  /// Puts a king on [index] without rules or mistakes. For tests.
+  void setKing(int index) => _kings[index] = true;
 
   /// Cell indexes of the kings that clash with at least one other king.
   Set<int> get clashingKings {
@@ -105,27 +114,24 @@ class KingsBoard {
   /// True when [size] kings stand and no two of them clash.
   bool get solved => kingCount == size && clashingKings.isEmpty;
 
-  /// Cycles the mark on a cell. A king that clashes with another king
-  /// stays, and counts as one mistake.
+  /// Toggles a king on a cell. A king on a crossed cell still goes down,
+  /// clashes and counts one mistake; taking any king off counts one
+  /// mistake too.
   KingsTapOutcome tap(int row, int col) {
     if (solved) return KingsTapOutcome.ignored;
     if (row < 0 || col < 0 || row >= size || col >= size) {
       return KingsTapOutcome.ignored;
     }
     final index = row * size + col;
-    switch (marks[index]) {
-      case KingsMark.empty:
-        marks[index] = KingsMark.cross;
-        return KingsTapOutcome.crossed;
-      case KingsMark.cross:
-        final clash = kings.any((k) => kingsClash(puzzle, index, k));
-        marks[index] = KingsMark.king;
-        if (!clash) return KingsTapOutcome.king;
-        mistakes++;
-        return KingsTapOutcome.clash;
-      case KingsMark.king:
-        marks[index] = KingsMark.empty;
-        return KingsTapOutcome.cleared;
+    if (_kings[index]) {
+      _kings[index] = false;
+      mistakes++;
+      return KingsTapOutcome.cleared;
     }
+    final clash = kings.any((k) => kingsClash(puzzle, index, k));
+    _kings[index] = true;
+    if (!clash) return KingsTapOutcome.king;
+    mistakes++;
+    return KingsTapOutcome.clash;
   }
 }

@@ -21,91 +21,101 @@ Color kingsRegionColor(List<Color> palette, int region) {
 bool kingsRegionStriped(List<Color> palette, int region) =>
     region >= palette.length;
 
-/// Draws Kings: a glass panel with the colored region grid, region
-/// borders, crosses and crowns. Clashing kings pulse red.
+/// Draws Kings in the Shikaku look: a glass panel with dark cell wells,
+/// each region as one rounded, see-through shape in its color with an
+/// outline, automatic crosses and crowns. Clashing kings pulse red.
 class KingsPainter {
-  static const Color _line = Color(0x33000000);
-  static const Color _border = AppColors.well;
-  static const Color _mark = Color(0xB314121F);
-  static const Color _crown = AppColors.textOnAccent;
-  static const Color _gem = Color(0xFFFFFFFF);
+  static const Color _mark = AppColors.textMuted;
+  static const Color _crown = AppColors.text;
   static const Color _stripe = Color(0x2EFFFFFF);
 
+  /// Gap between a region outline and the cell edge, in logical pixels.
+  static const double _inset = 3;
+
+  final Paint _panelFill = Paint()..color = AppColors.glassFill;
+  final Paint _wellFill = Paint()..color = AppColors.well;
+  final Paint _border = Paint()
+    ..style = PaintingStyle.stroke
+    ..strokeWidth = 1
+    ..color = AppColors.glassBorder;
   final Paint _fill = Paint()..isAntiAlias = true;
   final Paint _stroke = Paint()
     ..isAntiAlias = true
     ..style = PaintingStyle.stroke
-    ..strokeCap = StrokeCap.round;
+    ..strokeCap = StrokeCap.round
+    ..strokeJoin = StrokeJoin.round;
+
+  /// Region shapes, rebuilt when the grid moves or changes size.
+  List<Path> _regionPaths = const [];
+  Rect _pathsFor = Rect.zero;
 
   void render(Canvas canvas, KingsGame game) {
     final grid = game.gridRect;
     final cell = game.cell;
     final board = game.board;
-    final puzzle = board.puzzle;
     final n = board.size;
     final palette = game.setup.style.palette;
 
-    // Glass panel behind the grid.
     final panel = RRect.fromRectAndRadius(
-      grid.inflate(10),
-      const Radius.circular(AppRadii.tube + 4),
+      grid.inflate(8),
+      Radius.circular(cell * 0.3 + 8),
     );
-    canvas.drawRRect(panel, _fill..color = AppColors.glassFill);
-    canvas.drawRRect(
-      panel,
-      _stroke
-        ..color = AppColors.glassBorder
-        ..strokeWidth = 1.5,
-    );
+    canvas.drawRRect(panel, _panelFill);
+    canvas.drawRRect(panel, _border);
 
-    final rounded = RRect.fromRectAndRadius(
-      grid,
-      const Radius.circular(AppRadii.tube),
-    );
-    canvas.save();
-    canvas.clipRRect(rounded);
-
-    // Region fills, with stripes on regions that reuse a color.
+    final wellRadius = Radius.circular(cell * 0.16);
     for (var row = 0; row < n; row++) {
       for (var col = 0; col < n; col++) {
-        final region = puzzle.regionAt(row, col);
-        final r = _cellRect(game, row, col);
-        canvas.drawRect(r, _fill..color = kingsRegionColor(palette, region));
-        if (kingsRegionStriped(palette, region)) _drawStripes(canvas, r);
+        canvas.drawRRect(
+          RRect.fromRectAndRadius(
+            _cellRect(game, row, col).deflate(1.5),
+            wellRadius,
+          ),
+          _wellFill,
+        );
       }
     }
 
-    // Thin cell lines.
-    _stroke
-      ..color = _line
-      ..strokeWidth = 1;
-    for (var i = 1; i < n; i++) {
-      final x = grid.left + i * cell;
-      final y = grid.top + i * cell;
-      canvas.drawLine(Offset(x, grid.top), Offset(x, grid.bottom), _stroke);
-      canvas.drawLine(Offset(grid.left, y), Offset(grid.right, y), _stroke);
+    if (_pathsFor != grid || _regionPaths.length != n) {
+      _regionPaths = [for (var r = 0; r < n; r++) _regionPath(game, r)];
+      _pathsFor = grid;
     }
-
-    // Thick borders between regions.
-    _stroke
-      ..color = _border
-      ..strokeWidth = max(2.0, cell * 0.07);
-    for (var row = 0; row < n; row++) {
-      for (var col = 0; col < n; col++) {
-        final region = puzzle.regionAt(row, col);
-        final r = _cellRect(game, row, col);
-        if (col < n - 1 && puzzle.regionAt(row, col + 1) != region) {
-          canvas.drawLine(r.topRight, r.bottomRight, _stroke);
-        }
-        if (row < n - 1 && puzzle.regionAt(row + 1, col) != region) {
-          canvas.drawLine(r.bottomLeft, r.bottomRight, _stroke);
-        }
+    for (var region = 0; region < n; region++) {
+      final path = _regionPaths[region];
+      final color = kingsRegionColor(palette, region);
+      canvas.drawPath(path, _fill..color = color.withValues(alpha: 0.26));
+      if (kingsRegionStriped(palette, region)) {
+        canvas.save();
+        canvas.clipPath(path);
+        _drawStripes(canvas, grid, cell);
+        canvas.restore();
       }
     }
 
-    // Marks.
+    // Clashing kings get a red well under the region outlines.
     final clashing = board.clashingKings;
     final pulse = 0.5 + 0.5 * sin(game.clock * 6);
+    _fill.color = AppColors.danger.withValues(alpha: 0.35 + 0.25 * pulse);
+    for (final index in clashing) {
+      final row = index ~/ n, col = index % n;
+      canvas.save();
+      canvas.clipPath(_regionPaths[board.puzzle.regionAt(row, col)]);
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(
+          _cellRect(game, row, col).deflate(1.5),
+          wellRadius,
+        ),
+        _fill,
+      );
+      canvas.restore();
+    }
+
+    _stroke.strokeWidth = max(1.5, cell * 0.05);
+    for (var region = 0; region < n; region++) {
+      _stroke.color = kingsRegionColor(palette, region);
+      canvas.drawPath(_regionPaths[region], _stroke);
+    }
+
     for (var row = 0; row < n; row++) {
       for (var col = 0; col < n; col++) {
         final r = _cellRect(game, row, col);
@@ -115,29 +125,117 @@ class KingsPainter {
           case KingsMark.cross:
             _drawCross(canvas, r);
           case KingsMark.king:
-            final clash = clashing.contains(row * n + col);
-            if (clash) {
-              canvas.drawRect(
-                r,
-                _fill
-                  ..color = AppColors.danger.withValues(
-                    alpha: 0.35 + 0.25 * pulse,
-                  ),
-              );
-            }
-            _drawCrown(canvas, r, clash);
+            final color = kingsRegionColor(
+              palette,
+              board.puzzle.regionAt(row, col),
+            );
+            _drawCrown(canvas, r, clashing.contains(row * n + col), color);
         }
       }
     }
-    canvas.restore();
-
-    canvas.drawRRect(
-      rounded,
-      _stroke
-        ..color = _border
-        ..strokeWidth = max(2.0, cell * 0.07),
-    );
   }
+
+  /// The cells of [region] as one shape with rounded corners, [_inset]
+  /// inside the edges it shares with other regions and the grid border.
+  Path _regionPath(KingsGame game, int region) {
+    final puzzle = game.board.puzzle;
+    final n = puzzle.size;
+    bool inRegion(int row, int col) =>
+        row >= 0 &&
+        col >= 0 &&
+        row < n &&
+        col < n &&
+        puzzle.regionAt(row, col) == region;
+
+    // Border edges between grid corners, clockwise on screen, so the
+    // region is always on the right. Key: start corner (x, y).
+    final edges = <(int, int), List<(int, int)>>{};
+    void edge(int x0, int y0, int x1, int y1) =>
+        (edges[(x0, y0)] ??= []).add((x1, y1));
+    for (var row = 0; row < n; row++) {
+      for (var col = 0; col < n; col++) {
+        if (!inRegion(row, col)) continue;
+        if (!inRegion(row - 1, col)) edge(col, row, col + 1, row);
+        if (!inRegion(row, col + 1)) edge(col + 1, row, col + 1, row + 1);
+        if (!inRegion(row + 1, col)) edge(col + 1, row + 1, col, row + 1);
+        if (!inRegion(row, col - 1)) edge(col, row + 1, col, row);
+      }
+    }
+
+    final path = Path();
+    while (edges.isNotEmpty) {
+      // Walk one closed loop and keep only the corners.
+      final corners = <(int, int)>[];
+      final start = edges.keys.first;
+      var at = start;
+      (int, int)? dir;
+      do {
+        final outs = edges[at]!;
+        // Where two loops touch at a corner, turn right so each loop
+        // stays its own shape.
+        var pick = 0;
+        if (outs.length > 1 && dir != null) {
+          final right = (-dir.$2, dir.$1);
+          pick = outs.indexWhere((o) => (o.$1 - at.$1, o.$2 - at.$2) == right);
+          if (pick < 0) pick = 0;
+        }
+        final next = outs.removeAt(pick);
+        if (outs.isEmpty) edges.remove(at);
+        final step = (next.$1 - at.$1, next.$2 - at.$2);
+        if (step != dir) corners.add(at);
+        dir = step;
+        at = next;
+      } while (at != start);
+      if (corners.length > 1 && dir == _dirAt(corners[0], corners[1])) {
+        corners.removeAt(0);
+      }
+      _addRoundedLoop(path, game, corners);
+    }
+    return path;
+  }
+
+  (int, int) _dirAt((int, int) from, (int, int) to) =>
+      ((to.$1 - from.$1).sign, (to.$2 - from.$2).sign);
+
+  /// Adds the clockwise grid loop [corners] to [path]: moved [_inset]
+  /// inward, with round corners.
+  void _addRoundedLoop(Path path, KingsGame game, List<(int, int)> corners) {
+    final cell = game.cell;
+    final grid = game.gridRect;
+    final count = corners.length;
+    final points = <Offset>[];
+    for (var i = 0; i < count; i++) {
+      final dirIn = _dirAt(corners[(i - 1 + count) % count], corners[i]);
+      final dirOut = _dirAt(corners[i], corners[(i + 1) % count]);
+      // Inward is right of the travel direction: (-dy, dx).
+      final nx = -dirIn.$2 - dirOut.$2;
+      final ny = dirIn.$1 + dirOut.$1;
+      points.add(
+        Offset(
+          grid.left + corners[i].$1 * cell + nx * _inset,
+          grid.top + corners[i].$2 * cell + ny * _inset,
+        ),
+      );
+    }
+    final radius = cell * 0.2;
+    for (var i = 0; i < count; i++) {
+      final prev = points[(i - 1 + count) % count];
+      final p = points[i];
+      final next = points[(i + 1) % count];
+      final r = min(radius, min((p - prev).distance, (next - p).distance) / 2);
+      final a = p + _unit(prev - p) * r;
+      final b = p + _unit(next - p) * r;
+      if (i == 0) {
+        path.moveTo(a.dx, a.dy);
+      } else {
+        path.lineTo(a.dx, a.dy);
+      }
+      path.conicTo(p.dx, p.dy, b.dx, b.dy, sqrt1_2);
+    }
+    path.close();
+  }
+
+  Offset _unit(Offset v) => v / v.distance;
 
   Rect _cellRect(KingsGame game, int row, int col) => Rect.fromLTWH(
     game.gridRect.left + col * game.cell,
@@ -146,20 +244,21 @@ class KingsPainter {
     game.cell,
   );
 
-  /// Diagonal stripes; the spacing divides the cell so they line up
-  /// across neighboring cells.
-  void _drawStripes(Canvas canvas, Rect r) {
-    canvas.save();
-    canvas.clipRect(r);
-    final step = r.width / 4;
+  /// Diagonal stripes over the whole grid; draw them under a clip.
+  void _drawStripes(Canvas canvas, Rect grid, double cell) {
+    final step = cell / 4;
     _stroke
       ..color = _stripe
       ..strokeWidth = max(1.0, step * 0.35);
-    for (var i = 0; i <= 8; i++) {
-      final x = r.left + i * step;
-      canvas.drawLine(Offset(x - r.width, r.bottom), Offset(x, r.top), _stroke);
+    final count = (grid.width * 2 / step).ceil();
+    for (var i = 0; i <= count; i++) {
+      final x = grid.left + i * step;
+      canvas.drawLine(
+        Offset(x - grid.height, grid.bottom),
+        Offset(x, grid.top),
+        _stroke,
+      );
     }
-    canvas.restore();
   }
 
   void _drawCross(Canvas canvas, Rect r) {
@@ -173,7 +272,7 @@ class KingsPainter {
   }
 
   /// A crown with three points and a gem on each point.
-  void _drawCrown(Canvas canvas, Rect r, bool clash) {
+  void _drawCrown(Canvas canvas, Rect r, bool clash, Color gem) {
     final s = r.width;
     Offset at(double x, double y) => Offset(r.left + s * x, r.top + s * y);
     final body = Path()
@@ -208,7 +307,7 @@ class KingsPainter {
       ),
       _fill..color = fill,
     );
-    _fill.color = clash ? _crown : _gem;
+    _fill.color = clash ? _crown : gem;
     for (final p in [at(0.2, 0.36), at(0.5, 0.27), at(0.8, 0.36)]) {
       canvas.drawCircle(p, s * 0.05, _fill);
     }

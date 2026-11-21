@@ -13,10 +13,10 @@ import 'kings_painter.dart';
 /// Kings: place one king in every row, every column and every colored
 /// region. No two kings may touch, not even diagonally.
 ///
-/// A tap cycles a cell from empty to a cross (a note for the player) to
-/// a king and back to empty. A king that breaks a rule stays on the
-/// board and turns red, and counts as a mistake; stars come from the
-/// mistakes, see [kingsStars]. The level is won as soon as all kings
+/// A tap puts a king on a cell or takes it off. Every cell a standing
+/// king rules out gets a cross on its own. A king on a crossed cell still
+/// goes down, turns red and counts as a mistake; taking a king off counts
+/// as a mistake too. Stars come from the mistakes, see [kingsStars]. The level is won as soon as all kings
 /// stand and every rule holds. There is no way to lose.
 ///
 /// Levels are endless; [generateKingsPuzzle] builds each from its level
@@ -75,7 +75,6 @@ class KingsGame extends ArcadeLevelGame with TapCallbacks {
     switch (outcome) {
       case KingsTapOutcome.ignored:
         return outcome;
-      case KingsTapOutcome.crossed:
       case KingsTapOutcome.cleared:
         setup.sounds.tap();
         if (setup.haptics) HapticFeedback.selectionClick();
