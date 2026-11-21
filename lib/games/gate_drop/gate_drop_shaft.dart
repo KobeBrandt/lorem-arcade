@@ -6,16 +6,20 @@ import 'gate_drop_layout.dart';
 /// Ball physics of the shaft, in shaft units, with a fixed time step.
 ///
 /// Balls are points with a radius in fixed-size arrays. They fall, bounce
-/// off the walls, pegs and bars, multiply at open gates and get swallowed
-/// by locked gates. The sloped floor rolls every ball into the pipe in
-/// the middle. When the shaft is full, new copies merge into their parent
-/// ball as extra weight, so no value is lost.
+/// off the walls, pegs, bumpers and bars, multiply at open gates, get
+/// halved by traps, go back to the cup through refill gates and get
+/// swallowed by locked gates. The sloped floor rolls every ball into the
+/// pipe in the middle. When the shaft is full, new copies merge into
+/// their parent ball as extra weight, so no value is lost.
 class GateDropShaft {
   GateDropShaft(GateDropLayout layout, {int seed = 1})
     : gates = layout.gates,
+      shieldGate = layout.shieldGate,
       _random = Random(seed),
+      _trapIn = Int32List(layout.gates.length),
       gateX = Float64List(layout.gates.length),
-      lockLeft = Int32List(layout.gates.length) {
+      lockLeft = Int32List(layout.gates.length),
+      gateHits = Int32List(layout.gates.length) {
     for (var i = 0; i < gates.length; i++) {
       gateX[i] = gates[i].x;
       lockLeft[i] = gates[i].lock;
@@ -27,12 +31,14 @@ class GateDropShaft {
     _sbx = Float64List(_solidCount);
     _sby = Float64List(_solidCount);
     _sr = Float64List(_solidCount);
+    _bumper = Uint8List(_solidCount);
     for (var i = 0; i < _solidCount; i++) {
       _sax[i] = all[i].ax;
       _say[i] = all[i].ay;
       _sbx[i] = all[i].bx;
       _sby[i] = all[i].by;
       _sr[i] = all[i].radius;
+      _bumper[i] = all[i].bumper ? 1 : 0;
     }
   }
 
@@ -44,6 +50,9 @@ class GateDropShaft {
   static const double bounce = 0.45;
   static const double copySpread = 18;
   static const double pipeHalfWidth = 8;
+
+  /// Least speed a bumper gives a ball, away from its center.
+  static const double bumperKick = 95;
 
   /// Half the thickness of a gate bar.
   static const double gateThickness = 1.2;
@@ -63,7 +72,13 @@ class GateDropShaft {
   ];
 
   final List<GateSpec> gates;
+
+  /// Index of the boss shield lock, or -1.
+  final int shieldGate;
   final Random _random;
+
+  /// Weight that fell into each trap so far.
+  final Int32List _trapIn;
 
   /// Current center of each gate (moving gates slide).
   final Float64List gateX;
@@ -71,8 +86,12 @@ class GateDropShaft {
   /// Balls each gate still needs before it opens. 0 means open.
   final Int32List lockLeft;
 
+  /// Balls each gate acted on so far (multiplied, halved or refilled).
+  final Int32List gateHits;
+
   late final int _solidCount;
   late final Float64List _sax, _say, _sbx, _sby, _sr;
+  late final Uint8List _bumper;
 
   final Float64List x = Float64List(maxBalls);
   final Float64List y = Float64List(maxBalls);
@@ -97,8 +116,27 @@ class GateDropShaft {
   int locksOpened = 0;
   int bigHits = 0;
 
+  /// Weight that reached the pipe while the boss shield was up. It does
+  /// no damage.
+  int shieldedWeight = 0;
+
+  /// Weight removed by traps.
+  int trappedWeight = 0;
+
+  /// Weight sent back to the cup by refill gates.
+  int refilledWeight = 0;
+
+  /// Balls kicked by bumpers.
+  int bumps = 0;
+
   /// Index of the gate that opened last, or -1.
   int lastOpened = -1;
+
+  /// Whether the boss shield still blocks the damage.
+  bool get shieldUp => shieldGate >= 0 && lockLeft[shieldGate] > 0;
+
+  /// Weight that reached the pipe and hurt the horde.
+  int get damageWeight => collectedWeight - shieldedWeight;
 
   /// Total weight of the balls in the shaft.
   int get weightInShaft {
@@ -151,6 +189,7 @@ class GateDropShaft {
   void _collect(int i) {
     collectedBalls++;
     collectedWeight += weight[i];
+    if (shieldUp) shieldedWeight += weight[i];
     _remove(i);
   }
 
@@ -212,7 +251,21 @@ class GateDropShaft {
         bx = cx + nx * reach;
         by = cy + ny * reach;
         final vn = bvx * nx + bvy * ny;
-        if (vn < 0) {
+        if (_bumper[s] == 1) {
+          // A bumper reflects fully and kicks the ball away at speed.
+          if (vn < 0) {
+            bvx -= 2 * vn * nx;
+            bvy -= 2 * vn * ny;
+          }
+          final out = bvx * nx + bvy * ny;
+          if (out < bumperKick) {
+            bvx += (bumperKick - out) * nx;
+            bvy += (bumperKick - out) * ny;
+          }
+          // A ball dead on top still goes sideways.
+          if (nx.abs() < 0.3) bvx += (nx >= 0 ? 1 : -1) * bumperKick * 0.4;
+          bumps++;
+        } else if (vn < 0) {
           bvx -= (1 + bounce) * vn * nx;
           bvy -= (1 + bounce) * vn * ny;
           bvx *= 0.98;
@@ -250,7 +303,18 @@ class GateDropShaft {
         if ((passed[i] & bit) != 0) continue;
         if (py < gy && by >= gy && (bx - gx).abs() <= hw) {
           passed[i] |= bit;
-          _multiply(i, gates[g].multiplier);
+          gateHits[g]++;
+          switch (gates[g].kind) {
+            case GateKind.multiply:
+              _multiply(i, gates[g].multiplier);
+            case GateKind.halve:
+              if (_halve(i, g)) gone = true;
+            case GateKind.refill:
+              refilledWeight += weight[i];
+              _remove(i);
+              gone = true;
+          }
+          if (gone) break;
         }
       }
       if (gone) continue;
@@ -265,6 +329,22 @@ class GateDropShaft {
       }
       i++;
     }
+  }
+
+  /// Trap [g] keeps every second unit of weight, the first one included.
+  /// Returns true when ball [i] was removed.
+  bool _halve(int i, int g) {
+    final w = weight[i];
+    final before = _trapIn[g];
+    _trapIn[g] = before + w;
+    final keep = (before + w + 1) ~/ 2 - (before + 1) ~/ 2;
+    trappedWeight += w - keep;
+    if (keep > 0) {
+      weight[i] = keep;
+      return false;
+    }
+    _remove(i);
+    return true;
   }
 
   /// Turns ball [i] into [mult] balls. Copies that do not fit merge into

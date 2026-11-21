@@ -7,15 +7,41 @@ const double shaftWidth = 100;
 /// Height of the shaft in shaft units.
 const double shaftHeight = 150;
 
-/// A horizontal gate bar. An open gate multiplies the balls that fall
-/// through it. A locked gate ([lock] above 0) is solid: it swallows balls
-/// until [lock] of them landed, then it opens.
+/// What an open gate does to a ball that falls through it.
+enum GateKind {
+  /// The ball becomes [GateSpec.multiplier] balls.
+  multiply,
+
+  /// A trap: every second ball that falls through is removed.
+  halve,
+
+  /// The ball leaves the shaft and goes back into the cup.
+  refill,
+}
+
+/// The kind of a level.
+enum LevelKind {
+  /// Stop the horde before it reaches the wall.
+  normal,
+
+  /// A boss horde with a shield. Shots do no damage until the shield
+  /// lock ([GateDropLayout.shieldGate]) opens.
+  boss,
+
+  /// No horde walks. Pour the whole cup; stars come from the damage.
+  bonus,
+}
+
+/// A horizontal gate bar. An open gate acts on the balls that fall
+/// through it, see [kind]. A locked gate ([lock] above 0) is solid: it
+/// swallows balls until [lock] of them landed, then it opens.
 class GateSpec {
   const GateSpec({
     required this.x,
     required this.y,
     required this.halfWidth,
     required this.multiplier,
+    this.kind = GateKind.multiply,
     this.lock = 0,
     this.swing = 0,
     this.swingSpeed = 0,
@@ -27,8 +53,14 @@ class GateSpec {
   final double y;
   final double halfWidth;
 
-  /// A ball that crosses the gate becomes this many balls.
+  /// A ball that crosses a [GateKind.multiply] gate becomes this many
+  /// balls. Ignored by the other kinds.
   final int multiplier;
+
+  final GateKind kind;
+
+  /// A small fast x10 gate.
+  bool get isJackpot => kind == GateKind.multiply && multiplier >= 10;
 
   /// Balls needed to open the gate. 0 means open from the start.
   final int lock;
@@ -46,19 +78,31 @@ class GateSpec {
 }
 
 /// A solid round bar from (ax, ay) to (bx, by). A peg is a bar with both
-/// ends in the same place.
+/// ends in the same place. A bumper is a peg that kicks balls away.
 class SolidSpec {
-  const SolidSpec(this.ax, this.ay, this.bx, this.by, {this.radius = 1.2});
+  const SolidSpec(
+    this.ax,
+    this.ay,
+    this.bx,
+    this.by, {
+    this.radius = 1.2,
+    this.bumper = false,
+  });
 
   /// A round peg at (x, y).
   const SolidSpec.peg(double x, double y, {double radius = 1.8})
     : this(x, y, x, y, radius: radius);
+
+  /// A bouncy peg at (x, y) that kicks balls sideways.
+  const SolidSpec.bumper(double x, double y)
+    : this(x, y, x, y, radius: 2.6, bumper: true);
 
   final double ax;
   final double ay;
   final double bx;
   final double by;
   final double radius;
+  final bool bumper;
 
   bool get isPeg => ax == bx && ay == by;
 }
@@ -73,6 +117,8 @@ class GateDropLayout {
     required this.hordeHp,
     required this.hordeSeconds,
     required this.bestX,
+    this.kind = LevelKind.normal,
+    this.shieldGate = -1,
   });
 
   final List<GateSpec> gates;
@@ -84,6 +130,8 @@ class GateDropLayout {
   final int balls;
 
   /// Total horde hit points. Each ball that reaches the pipe deals 1.
+  /// On a bonus level it is the damage target for 3 stars' scale, see
+  /// [gateDropBonusStars].
   final int hordeHp;
 
   /// Seconds the horde needs to walk to the wall.
@@ -91,6 +139,24 @@ class GateDropLayout {
 
   /// Shaft x of the best pour line (the column of the strongest gates).
   final double bestX;
+
+  final LevelKind kind;
+
+  /// Index of the lock gate that holds the boss shield, or -1.
+  final int shieldGate;
+
+  /// A copy with other horde numbers.
+  GateDropLayout copyWith({int? hordeHp, double? hordeSeconds}) =>
+      GateDropLayout(
+        gates: gates,
+        solids: solids,
+        balls: balls,
+        hordeHp: hordeHp ?? this.hordeHp,
+        hordeSeconds: hordeSeconds ?? this.hordeSeconds,
+        bestX: bestX,
+        kind: kind,
+        shieldGate: shieldGate,
+      );
 }
 
 /// Stars for a won level, by the share of balls still in the cup:
@@ -100,5 +166,15 @@ int gateDropStars(int ballsLeft, int ballsAtStart) {
   final share = ballsLeft / ballsAtStart;
   if (share >= 0.4) return 3;
   if (share >= 0.15) return 2;
+  return 1;
+}
+
+/// Stars for a bonus level, by the damage dealt against [target]:
+/// 3 at 90% or more, 2 at 60% or more, else 1.
+int gateDropBonusStars(int damage, int target) {
+  if (target <= 0) return 3;
+  final share = damage / target;
+  if (share >= 0.9) return 3;
+  if (share >= 0.6) return 2;
   return 1;
 }

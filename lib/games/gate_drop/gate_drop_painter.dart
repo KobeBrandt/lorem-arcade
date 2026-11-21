@@ -10,8 +10,9 @@ import 'gate_drop_game.dart';
 import 'gate_drop_layout.dart';
 import 'gate_drop_shaft.dart';
 
-/// Draws Gate Drop: the horde strip, the glass shaft with its gates, pegs
-/// and balls, the cup and the shot streaks. Paints and texts are cached,
+/// Draws Gate Drop: the horde strip with its HP bar, the fever meter, the
+/// glass shaft with its gates, pegs, bumpers and balls, the cup, the shot
+/// streaks, pop-up texts, sparks and banners. Paints and texts are cached,
 /// so a frame only allocates a few small objects.
 class GateDropPainter {
   final Float32List _points = Float32List(GateDropShaft.maxBalls * 2);
@@ -46,7 +47,7 @@ class GateDropPainter {
   /// Builds the parts that only change with the game size.
   void layout(GateDropGame game) {
     final strip = game.stripRect;
-    _wallX = strip.right - 22;
+    _wallX = game.wallX;
     _cannon = Offset(_wallX - 2, strip.top + strip.height * 0.6);
     final pipe = Offset(
       game.toScreenX(shaftWidth / 2),
@@ -87,9 +88,28 @@ class GateDropPainter {
   void render(Canvas canvas, GateDropGame game) {
     _renderStrip(canvas, game);
     canvas.drawPath(_conduit, _conduitPaint);
+    _renderFever(canvas, game);
     _renderShaft(canvas, game);
     _renderShots(canvas, game);
+    _renderSparks(canvas, game);
+    _renderPops(canvas, game);
+    _renderBanner(canvas, game);
   }
+
+  static const Color _gold = Color(0xFFFFD36E);
+
+  Color _kindColor(GateDropGame game, GateSpec gate) => switch (gate.kind) {
+    GateKind.halve => AppColors.danger,
+    GateKind.refill => AppColors.accentMint,
+    GateKind.multiply when gate.isJackpot => _gold,
+    GateKind.multiply => _gateColor(game, gate.multiplier),
+  };
+
+  String _gateLabel(GateSpec gate) => switch (gate.kind) {
+    GateKind.halve => '/2',
+    GateKind.refill => '+cup',
+    GateKind.multiply => 'x${gate.multiplier}',
+  };
 
   Color _gateColor(GateDropGame game, int multiplier) {
     final palette = game.setup.style.palette;
@@ -129,7 +149,8 @@ class GateDropPainter {
     _fill.color = AppColors.accentMint;
     canvas.drawCircle(_cannon, 5, _fill);
 
-    // The horde: one figure per share of the hit points.
+    // The horde: one figure per share of the hit points. A hit flashes
+    // it and makes it shake.
     canvas.save();
     canvas.clipRRect(panel);
     final startHp = game.layout.hordeHp;
@@ -137,13 +158,21 @@ class GateDropPainter {
     final visible = game.hordeHp <= 0
         ? 0
         : min(figures, (game.hordeHp * figures / startHp).ceil());
-    final startX = strip.left + 18;
     final endX = _wallX - 10;
-    final front = startX + (endX - startX) * game.hordeProgress;
+    final jolt = game.hordeFlash * sin(game.clock * 70) * 2.5;
+    final front = game.hordeFrontX + jolt;
     const rowsPerColumn = 3;
     final rowGap = (strip.height - 44) / (rowsPerColumn - 1);
-    _fill.color = AppColors.danger;
-    for (var i = 0; i < visible; i++) {
+    final body = Color.lerp(
+      game.isBonus ? AppColors.accentLavender : AppColors.danger,
+      AppColors.text,
+      game.hordeFlash * 0.7,
+    )!;
+    _fill.color = body;
+    if (game.isBoss && visible > 0) {
+      _renderBoss(canvas, game, front, strip);
+    }
+    for (var i = game.isBoss ? 3 : 0; i < visible; i++) {
       final column = i ~/ rowsPerColumn;
       final row = i % rowsPerColumn;
       final cx = front - column * 15 - (row.isOdd ? 7 : 0);
@@ -162,8 +191,50 @@ class GateDropPainter {
     }
     canvas.restore();
 
-    final hp = _text('Horde ${game.hordeHp}', 12, AppColors.textMuted);
+    final label = game.isBonus
+        ? 'Target ${game.damageDealt}/${game.layout.hordeHp}'
+        : '${game.isBoss ? 'Boss' : 'Horde'} ${game.hordeHp}';
+    final hp = _text(label, 12, AppColors.textMuted);
     hp.paint(canvas, Offset(strip.left + 12, strip.top + 6));
+
+    // HP bar with a slow ghost bar behind it.
+    final hpBar = Rect.fromLTRB(
+      strip.left + 24 + hp.width,
+      strip.top + 10,
+      endX,
+      strip.top + 14,
+    );
+    if (hpBar.width > 20) {
+      _fill.color = AppColors.glassFill;
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(hpBar, const Radius.circular(2)),
+        _fill,
+      );
+      final full = game.layout.hordeHp.toDouble();
+      final ghost = game.isBonus
+          ? 0.0
+          : (game.ghostHp / full).clamp(0.0, 1.0).toDouble();
+      final now = game.isBonus
+          ? (game.damageDealt / full).clamp(0.0, 1.0).toDouble()
+          : (game.hordeHp / full).clamp(0.0, 1.0).toDouble();
+      _fill.color = AppColors.text.withValues(alpha: 0.55);
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(
+          Rect.fromLTWH(hpBar.left, hpBar.top, hpBar.width * ghost, 4),
+          const Radius.circular(2),
+        ),
+        _fill,
+      );
+      _fill.color = game.isBonus ? _gold : AppColors.danger;
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(
+          Rect.fromLTWH(hpBar.left, hpBar.top, hpBar.width * now, 4),
+          const Radius.circular(2),
+        ),
+        _fill,
+      );
+    }
+    if (game.isBonus) return;
     // Distance left to the wall.
     final bar = Rect.fromLTWH(
       strip.left + 12,
@@ -188,13 +259,162 @@ class GateDropPainter {
     );
   }
 
+  /// The boss: one big figure at the front, with a shield bubble while
+  /// the shield lock is closed.
+  void _renderBoss(Canvas canvas, GateDropGame game, double front, Rect strip) {
+    final cy = strip.top + strip.height * 0.55;
+    final cx = front - 6;
+    final bob = sin(game.clock * 5) * 1.5;
+    final center = Offset(cx, cy + bob);
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        Rect.fromCenter(center: center, width: 30, height: 34),
+        const Radius.circular(10),
+      ),
+      _fill,
+    );
+    canvas.drawCircle(center + const Offset(6, -6), 3, _eye);
+    canvas.drawCircle(center + const Offset(-4, -6), 3, _eye);
+    // Crown.
+    final top = cy + bob;
+    final crown = Path()
+      ..moveTo(cx - 10, top - 17)
+      ..lineTo(cx - 10, top - 25)
+      ..lineTo(cx - 5, top - 20)
+      ..lineTo(cx, top - 27)
+      ..lineTo(cx + 5, top - 20)
+      ..lineTo(cx + 10, top - 25)
+      ..lineTo(cx + 10, top - 17)
+      ..close();
+    final keep = _fill.color;
+    _fill.color = _gold;
+    canvas.drawPath(crown, _fill);
+    _fill.color = keep;
+    if (game.shaft.shieldUp) {
+      final pulse = 0.5 + 0.2 * sin(game.clock * 4);
+      _stroke
+        ..strokeWidth = 2.5
+        ..color = AppColors.accentLavender.withValues(alpha: pulse + 0.2);
+      canvas.drawArc(
+        Rect.fromCenter(
+          center: center + const Offset(4, 0),
+          width: 52,
+          height: 56,
+        ),
+        -pi / 2.4,
+        pi / 1.2,
+        false,
+        _stroke,
+      );
+      _glow.color = AppColors.accentLavender.withValues(alpha: pulse * 0.4);
+      canvas.drawCircle(center + const Offset(14, 0), 14, _glow);
+    }
+  }
+
+  void _renderFever(Canvas canvas, GateDropGame game) {
+    final strip = game.stripRect;
+    final bar = Rect.fromLTWH(
+      strip.left + 4,
+      strip.bottom + 7,
+      strip.width - 8,
+      5,
+    );
+    final r = RRect.fromRectAndRadius(bar, const Radius.circular(3));
+    _fill.color = AppColors.glassFill;
+    canvas.drawRRect(r, _fill);
+    final double share;
+    if (game.inFever) {
+      share = game.feverLeft / GateDropGame.feverSeconds;
+      _glow.color = _gold.withValues(alpha: 0.5 + 0.3 * sin(game.clock * 14));
+      canvas.drawRRect(r.inflate(2), _glow);
+    } else {
+      share = game.feverMeter / GateDropGame.feverPoints;
+    }
+    _fill.color = game.inFever ? _gold : _gold.withValues(alpha: 0.55);
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        Rect.fromLTWH(bar.left, bar.top, bar.width * share.clamp(0.0, 1.0), 5),
+        const Radius.circular(3),
+      ),
+      _fill,
+    );
+    if (game.comboLevel >= 2) {
+      final combo = _text('Combo ${game.comboLevel}', 10, _gold);
+      combo.paint(canvas, Offset(bar.right - combo.width, bar.bottom + 1));
+    }
+  }
+
+  void _renderSparks(Canvas canvas, GateDropGame game) {
+    for (var i = 0; i < GateDropGame.maxSparks; i++) {
+      final age = game.sparkAge[i];
+      if (age < 0) continue;
+      final t = age / GateDropGame.sparkLife;
+      _fill.color = game.sparkColor[i].withValues(alpha: 1 - t);
+      canvas.drawCircle(
+        Offset(game.sparkX[i], game.sparkY[i]),
+        2.2 * (1 - t) + 0.6,
+        _fill,
+      );
+    }
+  }
+
+  void _renderPops(Canvas canvas, GateDropGame game) {
+    for (var i = 0; i < GateDropGame.maxPops; i++) {
+      final age = game.popAge[i];
+      if (age < 0) continue;
+      final t = age / GateDropGame.popLife;
+      final g = game.popGate[i];
+      final base = switch (game.popTone[i]) {
+        1 => AppColors.danger,
+        2 => AppColors.accentMint,
+        3 => AppColors.text,
+        4 => _gold,
+        _ when g >= 0 && g < game.layout.gates.length => _kindColor(
+          game,
+          game.layout.gates[g],
+        ),
+        _ => AppColors.text,
+      };
+      // Pop in big, then float up and fade. Sizes and alphas are rounded,
+      // so the text cache stays small.
+      final grow = t < 0.15 ? 0.7 + t * 4 : 1.3 - (t - 0.15) * 0.35;
+      final alpha = (1 - t * t).clamp(0.0, 1.0);
+      final size = (game.popSize[i] * grow).roundToDouble();
+      final text = _text(
+        game.popText[i],
+        size,
+        base.withValues(alpha: (alpha * 10).round() / 10),
+      );
+      _centerText(canvas, text, Offset(game.popX[i], game.popY[i] - t * 22));
+    }
+  }
+
+  void _renderBanner(Canvas canvas, GateDropGame game) {
+    if (game.bannerLeft <= 0) return;
+    final t = game.bannerLeft / GateDropGame.bannerTime;
+    final alpha = (t > 0.85 ? (1 - t) / 0.15 : min(1.0, t / 0.3)).clamp(
+      0.0,
+      1.0,
+    );
+    final text = _text(
+      game.banner,
+      26,
+      _gold.withValues(alpha: (alpha * 10).round() / 10),
+    );
+    final rect = game.shaftRect;
+    _centerText(
+      canvas,
+      text,
+      Offset(rect.center.dx, rect.top + rect.height * 0.12),
+    );
+  }
+
   void _renderShots(Canvas canvas, GateDropGame game) {
     final strip = game.stripRect;
-    final startX = strip.left + 18;
-    final front = startX + (_wallX - 10 - startX) * game.hordeProgress;
+    final front = game.hordeFrontX;
     _stroke
-      ..strokeWidth = 2
-      ..color = AppColors.accentMint;
+      ..strokeWidth = game.inFever ? 3 : 2
+      ..color = game.inFever ? _gold : AppColors.accentMint;
     for (var i = 0; i < GateDropGame.maxShots; i++) {
       final age = game.shotAge[i];
       if (age < 0) continue;
@@ -223,6 +443,10 @@ class GateDropPainter {
       const Radius.circular(AppRadii.tube),
     );
     canvas.drawRRect(panel, _wellFill);
+    if (game.inFever) {
+      _fill.color = _gold.withValues(alpha: 0.05 + 0.03 * sin(game.clock * 10));
+      canvas.drawRRect(panel, _fill);
+    }
     canvas.drawRRect(panel, _border);
 
     Offset at(double x, double y) =>
@@ -273,7 +497,7 @@ class GateDropPainter {
         Radius.circular(band / 2),
       );
       final locked = shaft.lockLeft[g] > 0;
-      final color = _gateColor(game, gate.multiplier);
+      final color = _kindColor(game, gate);
       final flash = game.gateFlash[g];
       if (flash > 0) {
         _glow.color = color.withValues(alpha: 0.6 * flash);
@@ -282,9 +506,10 @@ class GateDropPainter {
       if (locked) {
         _fill.color = AppColors.glassStrong;
         canvas.drawRRect(r, _fill);
+        final shield = g == shaft.shieldGate;
         _stroke
-          ..strokeWidth = 1.5
-          ..color = AppColors.accentLavender;
+          ..strokeWidth = shield ? 2.5 : 1.5
+          ..color = shield ? _gold : AppColors.accentLavender;
         canvas.drawRRect(r, _stroke);
         final label = _text(
           '${shaft.lockLeft[g]}',
@@ -302,7 +527,7 @@ class GateDropPainter {
         canvas.drawRRect(r, _stroke);
         _centerText(
           canvas,
-          _text('x${gate.multiplier}', max(9.0, band * 0.85), AppColors.text),
+          _text(_gateLabel(gate), max(9.0, band * 0.85), AppColors.text),
           Offset(cx, cy),
         );
       }
@@ -315,7 +540,9 @@ class GateDropPainter {
       _points[i * 2 + 1] = game.toScreenY(shaft.y[i]);
     }
     if (count > 0) {
-      _balls.strokeWidth = GateDropShaft.ballRadius * 2 * s;
+      _balls
+        ..strokeWidth = GateDropShaft.ballRadius * 2 * s
+        ..color = game.inFever ? _gold : AppColors.accentMint;
       canvas.drawRawPoints(
         PointMode.points,
         Float32List.sublistView(_points, 0, count * 2),
@@ -329,6 +556,21 @@ class GateDropPainter {
   void _drawSolid(Canvas canvas, GateDropGame game, SolidSpec solid) {
     final s = game.scale;
     final a = Offset(game.toScreenX(solid.ax), game.toScreenY(solid.ay));
+    if (solid.bumper) {
+      final keepFill = _fill.color;
+      final keepStroke = _stroke.color;
+      _glow.color = AppColors.accentLavender.withValues(alpha: 0.35);
+      canvas.drawCircle(a, solid.radius * s * 1.3, _glow);
+      _fill.color = AppColors.accentLavender.withValues(alpha: 0.3);
+      canvas.drawCircle(a, solid.radius * s, _fill);
+      _stroke
+        ..strokeWidth = 1.5
+        ..color = AppColors.accentLavender;
+      canvas.drawCircle(a, solid.radius * s, _stroke);
+      _fill.color = keepFill;
+      _stroke.color = keepStroke;
+      return;
+    }
     if (solid.isPeg) {
       canvas.drawCircle(a, solid.radius * s, _fill);
       return;
