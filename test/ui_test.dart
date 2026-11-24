@@ -30,6 +30,47 @@ void main() {
     expect(settings.sound, isFalse);
   });
 
+  testWidgets('settings screen opens the privacy policy', (tester) async {
+    final settings = Settings(await _prefs());
+    final opened = <Uri>[];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: SettingsScreen(
+          settings: settings,
+          openUrl: (url) async {
+            opened.add(url);
+            return true;
+          },
+        ),
+      ),
+    );
+    await tester.ensureVisible(find.text('Privacy policy'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Privacy policy'));
+    await tester.pumpAndSettle();
+    expect(opened, [privacyPolicyUrl]);
+    expect(find.byType(SnackBar), findsNothing);
+  });
+
+  testWidgets('settings screen shows the privacy URL when no browser opens', (
+    tester,
+  ) async {
+    final settings = Settings(await _prefs());
+    await tester.pumpWidget(
+      MaterialApp(
+        home: SettingsScreen(
+          settings: settings,
+          openUrl: (_) async => throw Exception('no browser'),
+        ),
+      ),
+    );
+    await tester.ensureVisible(find.text('Privacy policy'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Privacy policy'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('$privacyPolicyUrl'), findsOneWidget);
+  });
+
   testWidgets('themes screen selects unlocked and ignores locked', (
     tester,
   ) async {
